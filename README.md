@@ -1,4 +1,4 @@
-# Privacy-Preservingn Lit Action Decryption Example
+# Privacy-Preserving Lit Action Decryption Example
 
 This example demonstrates how to use the Naga Lit Action to decrypt data where the Access Control Conditions is a Lit Action that checks if the user has a valid zero-knowledge proof (on the Base Sepolia testnet).
 
