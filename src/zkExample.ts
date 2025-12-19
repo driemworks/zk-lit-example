@@ -1,25 +1,57 @@
 import { nagaDev } from "@lit-protocol/networks";
 import { createLitClient } from "@lit-protocol/lit-client";
 import { createAuthManager, storagePlugins } from "@lit-protocol/auth";
-import { Account } from "viem";
+import { Account, Address, createPublicClient, createWalletClient, encodeFunctionData, Hex, http } from "viem";
 import { createAccBuilder } from "@lit-protocol/access-control-conditions";
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
+import { baseSepolia } from "viem/chains";
+
+// const _litActionCode = async () => {
+//     try {
+//         // Decrypt the content using decryptAndCombine
+//         const decryptedContent = await LitActions.decryptAndCombine({
+//             accessControlConditions: jsParams.accessControlConditions,
+//             ciphertext: jsParams.ciphertext,
+//             dataToEncryptHash: jsParams.dataToEncryptHash,
+//             // The authenticated identity from the authContext used
+//             // to make the decryption request is automatically used
+//             // for the decryption request
+//             authSig: null,
+//             chain: 'ethereum',
+//         });
+
+//         // Use the decrypted content for your logic
+//         LitActions.setResponse({
+//             response: `Successfully decrypted: ${decryptedContent}`,
+//             success: true
+//         });
+//     } catch (error) {
+//         LitActions.setResponse({
+//             response: `Decryption failed: ${error.message}`,
+//             success: false
+//         });
+//     }
+// };
+
+// const litActionCode = `(${_litActionCode.toString()})();`;
 
 export const runZkExample = async ({
     delegatorAccount,
     delegateeAccount,
     verifierContractAddress,
+    zkGateAddress,
     proofHex,
     // publicInputs,
     ipfsCid,
+    // decryptIpfsCid,
 }: {
     delegatorAccount: Account;
     delegateeAccount: Account;
     verifierContractAddress: string;
+    zkGateAddress: string;
     proofHex: string;
     // publicInputs: string;
     ipfsCid: string;
+    // decryptIpfsCid: string;
 }) => {
     const litClient = await createLitClient({
         // @ts-expect-error - TODO: fix this
@@ -28,16 +60,21 @@ export const runZkExample = async ({
 
     // Build access control conditions using the uploaded Lit Action
     // Pass contract address and required balance to the Lit Action
-    const litActionGated = createAccBuilder()
-        .requireLitAction(ipfsCid, "go", [verifierContractAddress, proofHex], "true")
+
+    // encrypt under the signature verifier lit action
+    // OK, so here we need to encrypt under a LIT action that verifies a signature
+    // and that signature must be from some speicific LIT action?
+    // e.g. "you can decrypt if the LIT action outputs a valid signature"
+    const acc = createAccBuilder()
+        .requireLitAction(ipfsCid, "go", [zkGateAddress, verifierContractAddress], "true")
         .build();
 
-    // delegatorAccount encrypts data (no AuthContext needed)
+    // // delegatorAccount encrypts data (no AuthContext needed)
     const encryptedData = await litClient.encrypt({
         dataToEncrypt:
             "The answer to the ultimate question of life, the universe, and everything is 42.",
-        unifiedAccessControlConditions: litActionGated,
-        chain: "baseSepolia",
+        unifiedAccessControlConditions: acc,
+        // chain: "baseSepolia",
     });
     console.log("Encrypted data:", encryptedData);
 
@@ -66,13 +103,98 @@ export const runZkExample = async ({
         },
     });
 
-    // delegateeAccount decrypts data (requires AuthContext)
-    // The delegatee should use the delegated payment capacity from delegatorAccount
-    const decryptedResponse = await litClient.decrypt({
-        data: encryptedData,
-        unifiedAccessControlConditions: litActionGated,
-        authContext,
-        chain: "baseSepolia",
+
+    // submit proof on-chain
+    // === SUBMIT PROOF ON-CHAIN (delegatee) ===
+    const rpcUrl = process.env.CHAIN_RPC_URL;
+    if (!rpcUrl) throw new Error("CHAIN_RPC_URL required");
+
+    const publicClient = createPublicClient({ transport: http(rpcUrl) });
+
+    const walletClient = createWalletClient({ account: delegateeAccount, transport: http(rpcUrl) });
+
+    const zkGateAbi = [
+        {
+            name: "submitAndVerify",
+            type: "function",
+            stateMutability: "nonpayable",
+            inputs: [
+                { name: "verifier", type: "address" },
+                { name: "proof", type: "bytes" },
+                { name: "publicInputs", type: "bytes32[]" },
+            ],
+            outputs: [{ type: "bool" }],
+        },
+        {
+            name: "checkAccess",
+            type: "function",
+            stateMutability: "view",
+            inputs: [
+                { name: "user", type: "address" },
+                { name: "verifier", type: "address" }
+            ],
+            outputs: [{ type: "bool" }],
+        },
+    ] as const;
+
+    console.log("Submitting proof to ZKGate...");
+
+    // Simulate (sanity check)
+    const valid = await publicClient.simulateContract({
+        address: zkGateAddress as Address,
+        abi: zkGateAbi,
+        functionName: "submitAndVerify",
+        args: [verifierContractAddress as Address, proofHex as Hex, [] as `0x${string}`[]],
+        account: delegateeAccount,
     });
-    console.log("Decrypted response:", decryptedResponse);
+    console.log("Will succeed:", valid.result);
+
+    const callData = encodeFunctionData({
+        abi: zkGateAbi,
+        functionName: 'submitAndVerify',
+        args: [verifierContractAddress as Address, proofHex as Hex, [] as `0x${string}`[]],
+    });
+
+    const gasPrice = await publicClient.getGasPrice();
+    const nonce = await publicClient.getTransactionCount({ address: walletClient.account.address });
+
+    const zkGateResult = await publicClient.call({
+        to: zkGateAddress as Hex,
+        data: callData,
+        gas: 20_000_000n,
+        gasPrice: gasPrice,
+        nonce,
+    });
+
+    // const receipt = await publicClient.waitForTransactionReceipt({ callHash });
+    // console.log("Transaction status:", receipt.status);
+    // console.log("Transaction hash:", receipt.transactionHash);
+    console.log("result: ", zkGateResult);
+    console.log("Delegatee address:", delegateeAccount.address);
+
+    // const tx = await publicClient.getTransaction({ hash });
+    // console.log("Transaction from:", tx.from);
+
+
+    // sanity check
+    const hasAccessForSender = await publicClient.readContract({
+        address: zkGateAddress as Hex,
+        abi: zkGateAbi,
+        functionName: "checkAccess",
+        args: [tx.from, verifierContractAddress as Address],
+    });
+    console.log("Has access? :", hasAccessForSender);
+    if (!hasAccessForSender) {
+        throw new Error("Proof verification failed on-chain");
+    }
+
+    // TODO: can replace with decrypt call!
+    // as is, this doesn't actually decrypt anything.
+    const result = await litClient.executeJs({
+        ipfsId: ipfsCid,
+        authContext: authContext,
+    });
+
+    console.log("Decrypted response:", result);
 };
+

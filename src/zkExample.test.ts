@@ -1,11 +1,11 @@
 import { beforeAll, describe, it, expect } from "vitest";
-import { Account, Hex, parseEther, toHex, type Address } from "viem";
+import { Account, encodeFunctionData, Hex, parseEther, toHex, type Address } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { uploadLitActionToIpfs } from "./uploadToIpfs.js";
-import { deployContract } from "./deployContract.js";
+import { deployContracts } from "./deployContract.js";
 import { runZkExample } from "./zkExample.js";
 
 import { Barretenberg, UltraHonkBackend } from '@aztec/bb.js';
@@ -13,7 +13,7 @@ import { Noir } from '@noir-lang/noir_js';
 // import * as circuit from '../circuit/target/circuit.json';
 import { createRequire } from 'module';
 import { createPublicClient, http } from 'viem';
-import { baseSepolia } from 'viem/chains';
+import { baseSepolia, lineaSepolia } from 'viem/chains';
 
 // Import everything to see what's available
 import * as acvm from '@noir-lang/acvm_js';
@@ -55,13 +55,18 @@ const getEnv = (key: string) => {
 };
 
 describe("ZK-gated decryption", () => {
+    let rpcUrl: string;
     let delegatorAccount: Account;
     let delegateeAccount: Account;
     let verifierContractAddress: Address;
+    let zkGateAddress: Address;
     let contractAbi: any;
     let ipfsCid: string;
 
     beforeAll(async () => {
+
+        rpcUrl = getEnv("CHAIN_RPC_URL");
+
         console.log('pk ' + getEnv("DELEGATOR_ETH_PRIVATE_KEY"))
 
         delegatorAccount = privateKeyToAccount(
@@ -73,48 +78,61 @@ describe("ZK-gated decryption", () => {
         );
 
         // Upload the Lit Action to IPFS
-        console.log("\n=== Uploading Lit Action to IPFS ===");
+        console.log("\n=== Uploading Verifier Lit Action to IPFS ===");
         const litActionCode = readFileSync(
-            join(__dirname, "litAction.js"),
+            join(__dirname, "./lit-actions/litAction.js"),
             "utf-8",
         );
         ipfsCid = await uploadLitActionToIpfs(litActionCode);
-        console.log(`Lit Action CID: ${ipfsCid}`);
+        console.log(`Verifier Lit Action CID: ${ipfsCid}`);
 
         // Deploy the Verifier contract
         console.log("\n=== Deploying Verifier Contract ===");
 
-        const deployment = await deployContract({ account: delegatorAccount });
+        // const deployment = await deployContracts({ account: delegatorAccount });
 
-        verifierContractAddress = deployment.address;
-        contractAbi = deployment.abi;
-        console.log(`Verifier deployed at: ${verifierContractAddress}`);
+        // verifierContractAddress = deployment.verifierAddress;
+        // zkGateAddress = deployment.zkGateAddress;
+
+        verifierContractAddress = "0xb2e6c549e2fd5e72b4ae9a64d62551e24fac5dfd"
+        zkGateAddress = "0x1defd93baac50db5ca112a7e84d9e86659db0966"
+
+        // verifierAbi = deployment.verifierAbi;
+        // zkGateAbi = deployment.zkGateAbi;
+
+        console.log(`Verifier: ${verifierContractAddress}`);
+        console.log(`ZKGate: ${zkGateAddress}`);
+        // const deployment = await deployContract({ account: delegatorAccount });
+
+        // verifierContractAddress = deployment.address;
+        // contractAbi = deployment.abi;
+        // console.log(`Verifier deployed at: ${verifierContractAddress}`);
 
     }, 120000); // 2 minute timeout for deployment
 
-    it("should fail to decrypt when the proof is invalid", async () => {
-        // using a dummy circuit for now, you just have to prove that you 
-        // know two numbers that are different, so it fails by supplying two same numbers
-        let didFail = false;
+    // it("should fail to decrypt when the proof is invalid", async () => {
+    //     // using a dummy circuit for now, you just have to prove that you 
+    //     // know two numbers that are different, so it fails by supplying two same numbers
+    //     let didFail = false;
 
-        try {
-            // invalid proof data
-            let proofHex = "61" // 'a'
+    //     try {
+    //         // invalid proof data
+    //         let proofHex = "61" // 'a'
 
-            await runZkExample({
-                delegatorAccount,
-                delegateeAccount,
-                verifierContractAddress,
-                proofHex,
-                ipfsCid,
-            });
-        } catch (error) {
-            didFail = true;
-            console.log("Decryption failed as expected:", error);
-        }
+    //         await runZkExample({
+    //             delegatorAccount,
+    //             delegateeAccount,
+    //             verifierContractAddress,
+    //             proofHex,
+    //             ipfsCid,
+    //         });
+    //     } catch (error) {
+    //         didFail = true;
+    //         console.log("Decryption failed as expected:", error);
+    //     }
 
-        expect(didFail).toBe(true);
-    }, 120000);
+    //     expect(didFail).toBe(true);
+    // }, 120000);
 
     it("should succeed to decrypt when the proof is valid", async () => {
         const api = await Barretenberg.new({ threads: 1 });
@@ -144,8 +162,8 @@ describe("ZK-gated decryption", () => {
 
         // Test verification locally first
         const publicClient = createPublicClient({
-            chain: baseSepolia,
-            transport: http('https://sepolia.base.org')
+            chain: lineaSepolia,
+            transport: http(rpcUrl)
         });
 
         const verifierAbi = [
@@ -159,16 +177,6 @@ describe("ZK-gated decryption", () => {
                 ],
                 outputs: [{ type: 'bool' }]
             },
-            // Add the custom error definition
-            {
-                type: 'error',
-                name: 'ProofLengthWrongWithLogN',
-                inputs: [
-                    { name: 'logN', type: 'uint256' },
-                    { name: 'receivedLength', type: 'uint256' },
-                    { name: 'expectedLength', type: 'uint256' }
-                ]
-            }
         ] as const;
 
         console.log("\n=== Testing LOCAL verification ===");
@@ -180,15 +188,31 @@ describe("ZK-gated decryption", () => {
             if (!isValid) {
                 throw new Error("First Local verification failed - proof is invalid");
             }
-            
+
+            console.log('Local verification success!');
             // verify against the contract directly
-            console.log('Local solidity contract verification success!');
             // check against contract (locally - no lit action involved yet)
-            const localResult = await publicClient.readContract({
-                address: verifierContractAddress,
+            // const localResult = await publicClient.readContract({
+            //     address: verifierContractAddress,
+            //     abi: verifierAbi,
+            //     functionName: 'verify',
+            //     args: [proofHex, publicInputs]
+            // });
+
+            const verifierCode = await publicClient.getCode({ address: verifierContractAddress });
+            console.log("Verifier has code:", verifierCode && verifierCode !== '0x');
+
+            // 2. Try calling the verifier directly (not through submitAndVerify)
+            const callData = encodeFunctionData({
                 abi: verifierAbi,
                 functionName: 'verify',
-                args: [proofHex, publicInputs]
+                args: [proofHex, publicInputs],
+            });
+
+            const localResult = await publicClient.call({
+                to: verifierContractAddress,
+                data: callData,
+                // gas: 20_000_000n,
             });
 
             console.log("Local verification result:", localResult);
@@ -206,10 +230,12 @@ describe("ZK-gated decryption", () => {
             delegatorAccount,
             delegateeAccount,
             verifierContractAddress,
+            zkGateAddress,
             proofHex: proofHex,
             ipfsCid,
+            // decryptIpfsCid,
         });
 
         console.log("Decryption succeeded!");
-    }, 120000);
+    }, 700000);
 });

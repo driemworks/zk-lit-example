@@ -27,3 +27,16 @@ The tests will:
 3. Run the tests:
    - Should fail to decrypt when delegatee provides invalid proof data
    - Should succeed to decrypt when delegatee has a valid proof
+
+
+### TODOs
+
+- For an initial version, we have one lit action per [zkGateContract, verifierContract] combination. That means we need: one lit action per verifier and one verifier per ciphertext. Verifiers can be reused when verifying the same circuits and zkgate contracts can be reused (that is: we only need one zkgate contract for now).
+  - the reasoning is pragmnatic: simply calling decrypt doesn't let us pass jsParams, we need to call executeJs instead. However, when calling executeJs we would then decrypt within the LIT action. But there's the problem: the acc we specified requires jsParams.... So we actually need a new acc.
+  - We could probably instead encrypt the message under an ACC that expects some specific sig by a specific PKP. In the first LIT action the sig is produced when proofs are valid, then in the second phase decrypt occurs.
+
+
+
+- for the verifier/zkgate contracts, do we want to add nullifiers or anythingn?
+  - e.g. we can enforce "no double-spending" for proofs (can't reuse them). 
+  - This is critical in a real scenario imo. 
