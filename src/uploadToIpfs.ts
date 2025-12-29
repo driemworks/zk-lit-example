@@ -64,6 +64,5 @@ export async function uploadLitActionToIpfs(
 	}
 
 	const ipfsCid = await uploadToIPFS("lit-action.js", litActionCode, jwt);
-	console.log(`✅ Lit Action uploaded to IPFS with CID: ${ipfsCid}`);
 	return ipfsCid;
 }

@@ -23,7 +23,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const circuit = require("../circuit/target/circuit.json");
 
-const currentChain = foundry;
+const currentChain = baseSepolia;
 
 /**
  * Compiles verifier from circuit

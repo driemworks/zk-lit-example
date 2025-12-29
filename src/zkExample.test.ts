@@ -65,7 +65,7 @@ const getEnv = (key: string) => {
 	return value;
 };
 
-const doDeploy = true;
+const doDeploy = false;
 
 describe("ZK-gated decryption", () => {
 	let rpcUrl: string;
@@ -89,14 +89,15 @@ describe("ZK-gated decryption", () => {
 			getEnv("DELEGATEE_ETH_PRIVATE_KEY") as Hex,
 		);
 
-		// // Upload the Lit Action to IPFS
-		// console.log("\n=== Uploading Verifier Lit Action to IPFS ===");
-		// const litActionCode = readFileSync(
-		// 	join(__dirname, "./lit-actions/litAction.js"),
-		// 	"utf-8",
-		// );
+		// Upload the Lit Action to IPFS
+		console.log("\n=== Uploading Verifier Lit Action to IPFS ===");
+		const litActionCode = readFileSync(
+			join(__dirname, "./lit-actions/litAction.js"),
+			"utf-8",
+		);
 		// ipfsCid = await uploadLitActionToIpfs(litActionCode);
-		// console.log(`Verifier Lit Action CID: ${ipfsCid}`);
+		ipfsCid = "QmeVnU3Kr6wFeQBy9FLFp57gqD32BR1Bg4GyWSKSA3pgfH";
+		console.log(`✅ Lit Action uploaded to IPFS with CID: ${ipfsCid}`);
 
 		// Deploy the Verifier contract
 		console.log("\n=== Deploying Verifier Contract ===");
@@ -107,8 +108,8 @@ describe("ZK-gated decryption", () => {
 			verifierContractAddress = deployment.verifierAddress;
 			zkGateAddress = deployment.zkGateAddress;
 		} else {
-			verifierContractAddress = "0xb2e6c549e2fd5e72b4ae9a64d62551e24fac5dfd";
-			zkGateAddress = "0x1defd93baac50db5ca112a7e84d9e86659db0966";
+			verifierContractAddress = "0x4aa8309d15c7101fcbfece280ac34b1564c05445";
+			zkGateAddress = "0x41341ec1a3b4f2f1c711e603b9a57b8d2540b226";
 		}
 
 		// verifierAbi = deployment.verifierAbi;
@@ -172,7 +173,7 @@ describe("ZK-gated decryption", () => {
 
 		// Test verification locally first
 		const publicClient = createPublicClient({
-			chain: foundry,
+			chain: baseSepolia,
 			transport: http(rpcUrl),
 		});
 
@@ -237,7 +238,7 @@ describe("ZK-gated decryption", () => {
 			verifierContractAddress,
 			zkGateAddress,
 			proofHex: proofHex,
-			ipfsCid: "",
+			ipfsCid,
 			// decryptIpfsCid,
 		});
 

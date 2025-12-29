@@ -228,7 +228,7 @@ export const runZkExample = async ({
 		],
 		functionName: "verify",
 		args: [proofHex as Hex, [] as `0x${string}`[]],
-		chain: foundry,
+		chain: baseSepolia,
 		gas: dgas + dgas / 10n,
 		gasPrice: gasPrice * 2n,
 	});
@@ -262,7 +262,7 @@ export const runZkExample = async ({
 			proofHex as Hex,
 			[] as `0x${string}`[],
 		],
-		chain: foundry,
+		chain: baseSepolia,
 		gas: gas + gas / 10n, // 10% buffer
 		gasPrice: gasPrice * 2n,
 	});
@@ -273,13 +273,24 @@ export const runZkExample = async ({
 	console.log("Transaction confirmed in block:", txReceipt.blockNumber);
 	console.log("Transaction status:", txReceipt.status);
 
+	console.log("Transaction receipt:", txReceipt);
+	console.log("Logs:", txReceipt.logs);
+
+	// Also check what msg.sender actually was
+	console.log("Transaction from:", txReceipt.from);
+	console.log("Checking access for:", delegateeAccount.address);
+	console.log(
+		"Are they the same?",
+		txReceipt.from.toLowerCase() === delegateeAccount.address.toLowerCase(),
+	);
+
 	// Check immediately
 	const hasAccess = await publicClient.readContract({
 		address: zkGateAddress as Hex,
 		abi: zkGateAbi,
 		functionName: "checkAccess",
 		args: [delegateeAccount.address, verifierContractAddress as Address],
-		blockNumber: txReceipt.blockNumber, // ← Check at the exact block
+		// blockNumber: txReceipt.blockNumber, // ← Check at the exact block
 	});
 	console.log("Has access (at tx block):", hasAccess);
 
