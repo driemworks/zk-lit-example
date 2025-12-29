@@ -77,12 +77,10 @@ export const runZkExample = async ({
 		)
 		.build();
 
-	// delegatorAccount encrypts data (no AuthContext needed)
 	const encryptedData = await litClient.encrypt({
-		dataToEncrypt:
-			"The answer to the ultimate question of life, the universe, and everything is 42.",
+		dataToEncrypt: "The answer...",
 		unifiedAccessControlConditions: acc,
-		// chain: "baseSepolia",
+		chain: "baseSepolia",
 	});
 	console.log("Encrypted data:", encryptedData);
 
@@ -300,11 +298,12 @@ export const runZkExample = async ({
 	}
 
 	// TODO: can replace with decrypt call!
-	// as is, this doesn't actually decrypt anything.
-	// const result = await litClient.executeJs({
-	//     ipfsId: ipfsCid,
-	//     authContext: authContext,
-	// });
+	// as is, this doesn't actually decrypt anything, just queries the contract .
+	const decryptedContent = await litClient.decrypt({
+		...encryptedData,
+		unifiedAccessControlConditions: acc,
+		authContext: authContext,
+	});
 
-	// console.log("Decrypted response:", result);
+	console.log("Decrypted:", decryptedContent);
 };

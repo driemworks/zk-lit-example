@@ -95,8 +95,8 @@ describe("ZK-gated decryption", () => {
 			join(__dirname, "./lit-actions/litAction.js"),
 			"utf-8",
 		);
-		// ipfsCid = await uploadLitActionToIpfs(litActionCode);
-		ipfsCid = "QmeVnU3Kr6wFeQBy9FLFp57gqD32BR1Bg4GyWSKSA3pgfH";
+		ipfsCid = await uploadLitActionToIpfs(litActionCode);
+		// ipfsCid = "QmeVnU3Kr6wFeQBy9FLFp57gqD32BR1Bg4GyWSKSA3pgfH";
 		console.log(`✅ Lit Action uploaded to IPFS with CID: ${ipfsCid}`);
 
 		// Deploy the Verifier contract
