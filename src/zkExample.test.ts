@@ -20,7 +20,7 @@ import { Noir } from "@noir-lang/noir_js";
 // import * as circuit from '../circuit/target/circuit.json';
 import { createRequire } from "module";
 import { createPublicClient, http } from "viem";
-import { baseSepolia, lineaSepolia } from "viem/chains";
+import { baseSepolia, foundry, lineaSepolia, sepolia } from "viem/chains";
 
 // Import everything to see what's available
 import * as acvm from "@noir-lang/acvm_js";
@@ -89,14 +89,14 @@ describe("ZK-gated decryption", () => {
 			getEnv("DELEGATEE_ETH_PRIVATE_KEY") as Hex,
 		);
 
-		// Upload the Lit Action to IPFS
-		console.log("\n=== Uploading Verifier Lit Action to IPFS ===");
-		const litActionCode = readFileSync(
-			join(__dirname, "./lit-actions/litAction.js"),
-			"utf-8",
-		);
-		ipfsCid = await uploadLitActionToIpfs(litActionCode);
-		console.log(`Verifier Lit Action CID: ${ipfsCid}`);
+		// // Upload the Lit Action to IPFS
+		// console.log("\n=== Uploading Verifier Lit Action to IPFS ===");
+		// const litActionCode = readFileSync(
+		// 	join(__dirname, "./lit-actions/litAction.js"),
+		// 	"utf-8",
+		// );
+		// ipfsCid = await uploadLitActionToIpfs(litActionCode);
+		// console.log(`Verifier Lit Action CID: ${ipfsCid}`);
 
 		// Deploy the Verifier contract
 		console.log("\n=== Deploying Verifier Contract ===");
@@ -172,7 +172,7 @@ describe("ZK-gated decryption", () => {
 
 		// Test verification locally first
 		const publicClient = createPublicClient({
-			chain: lineaSepolia,
+			chain: foundry,
 			transport: http(rpcUrl),
 		});
 
@@ -237,7 +237,7 @@ describe("ZK-gated decryption", () => {
 			verifierContractAddress,
 			zkGateAddress,
 			proofHex: proofHex,
-			ipfsCid,
+			ipfsCid: "",
 			// decryptIpfsCid,
 		});
 

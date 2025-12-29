@@ -11,13 +11,19 @@ import {
 } from "viem";
 import solc from "solc";
 import { Barretenberg, UltraHonkBackend } from "@aztec/bb.js";
-import { baseSepolia, lineaSepolia, scrollSepolia } from "viem/chains";
+import {
+	baseSepolia,
+	foundry,
+	lineaSepolia,
+	scrollSepolia,
+	sepolia,
+} from "viem/chains";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const circuit = require("../circuit/target/circuit.json");
 
-const currentChain = lineaSepolia;
+const currentChain = foundry;
 
 /**
  * Compiles verifier from circuit
@@ -278,7 +284,7 @@ export async function deployZKGate({ account }: { account: Account }): Promise<{
 		data: `0x${zkGate.bytecode}` as Hex,
 		gas: gasEstimate + gasEstimate / 10n,
 		gasPrice: gasPrice,
-		nonce: nonce + 1,
+		// nonce: nonce + 1,
 		chain: currentChain,
 	});
 	const zkGateReceipt = await publicClient.waitForTransactionReceipt({

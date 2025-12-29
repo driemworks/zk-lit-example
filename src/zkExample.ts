@@ -11,7 +11,7 @@ import {
 	http,
 } from "viem";
 import { createAccBuilder } from "@lit-protocol/access-control-conditions";
-import { baseSepolia, lineaSepolia } from "viem/chains";
+import { baseSepolia, foundry, lineaSepolia, sepolia } from "viem/chains";
 
 // const _litActionCode = async () => {
 //     try {
@@ -228,7 +228,7 @@ export const runZkExample = async ({
 		],
 		functionName: "verify",
 		args: [proofHex as Hex, [] as `0x${string}`[]],
-		chain: lineaSepolia,
+		chain: foundry,
 		gas: dgas + dgas / 10n,
 		gasPrice: gasPrice * 2n,
 	});
@@ -262,32 +262,38 @@ export const runZkExample = async ({
 			proofHex as Hex,
 			[] as `0x${string}`[],
 		],
-		chain: lineaSepolia,
+		chain: foundry,
 		gas: gas + gas / 10n, // 10% buffer
 		gasPrice: gasPrice * 2n,
 	});
 
-	const receipt = await publicClient.waitForTransactionReceipt({ hash });
-	console.log("Transaction status:", receipt.status);
-
 	// sanity check
-	const hasAccessForSender = await publicClient.readContract({
+	// Right after transaction succeeds
+	const txReceipt = await publicClient.waitForTransactionReceipt({ hash });
+	console.log("Transaction confirmed in block:", txReceipt.blockNumber);
+	console.log("Transaction status:", txReceipt.status);
+
+	// Check immediately
+	const hasAccess = await publicClient.readContract({
 		address: zkGateAddress as Hex,
 		abi: zkGateAbi,
 		functionName: "checkAccess",
 		args: [delegateeAccount.address, verifierContractAddress as Address],
+		blockNumber: txReceipt.blockNumber, // ← Check at the exact block
 	});
-	console.log("Has access? :", hasAccessForSender);
-	if (!hasAccessForSender) {
+	console.log("Has access (at tx block):", hasAccess);
+
+	console.log("Has access? :", hasAccess);
+	if (!hasAccess) {
 		throw new Error("Proof verification failed on-chain");
 	}
 
 	// TODO: can replace with decrypt call!
 	// as is, this doesn't actually decrypt anything.
-	const result = await litClient.executeJs({
-		ipfsId: ipfsCid,
-		authContext: authContext,
-	});
+	// const result = await litClient.executeJs({
+	//     ipfsId: ipfsCid,
+	//     authContext: authContext,
+	// });
 
-	console.log("Decrypted response:", result);
+	// console.log("Decrypted response:", result);
 };
