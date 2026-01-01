@@ -1,0 +1,6 @@
+[package]
+name = "preimage"
+type = "bin"
+authors = [""]
+
+[dependencies]

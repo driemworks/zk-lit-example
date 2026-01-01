@@ -1,34 +1,32 @@
-// import { createAccBuilder } from "@lit-protocol/access-control-conditions";
-// import { acala } from "viem/chains";
+import { createAccBuilder } from "@lit-protocol/access-control-conditions";
 
-// export const encryptWithZkCondition = async ({
-//     litClient,
-//     dataToEncrypt,
-//     verifierContractAddress,
-//     proofHex,
-//     ipfsCid,
-// }: {
-//     litClient: any;
-//     dataToEncrypt: string;
-//     proofHex: string;
-//     verifierContractAddress: string;
-//     ipfsCid: string;  // Lit Action that does verification
-// }) => {
-//     // Build access control conditions using the uploaded Lit Action
-//     // Pass contract address and required balance to the Lit Action
-//     const acc = createAccBuilder()
-//         .requireLitAction(ipfsCid, "go", [verifierContractAddress, proofHex], "true")
-//         .build();
+export const encryptWithZkCondition = async (
+	litClient: any,
+	plaintext: string,
+	verifierContractAddress: string,
+	zkGateAddress: string,
+	ipfsCid: string,
+) => {
+	// acc: the caller must have verified a proof under verifierContractAddress
+	// in the context of the zkgate contract
+	const acc = createAccBuilder()
+		.requireLitAction(
+			ipfsCid,
+			"go",
+			[zkGateAddress, verifierContractAddress],
+			"true",
+		)
+		.build();
 
-//     // delegatorAccount encrypts data (no AuthContext needed)
-//     const encryptedData = await litClient.encrypt({
-//         dataToEncrypt,
-//         unifiedAccessControlConditions: acc,
-//         chain: "baseSepolia",
-//     });
+	const encryptedData = await litClient.encrypt({
+		dataToEncrypt: plaintext,
+		unifiedAccessControlConditions: acc,
+		chain: "baseSepolia",
+	});
+	console.log("Encrypted data:", encryptedData);
 
-//     return {
-//         encryptedData,
-//         acc,
-//     };
-// };
+	return {
+		encryptedData,
+		acc,
+	};
+};

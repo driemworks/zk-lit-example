@@ -21,7 +21,7 @@ import {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const circuit = require("../circuit/target/circuit.json");
+const circuit = require("../circuits/sum3-circuit/target/circuit.json");
 
 const currentChain = baseSepolia;
 

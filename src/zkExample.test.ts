@@ -29,7 +29,7 @@ import * as noirc from "@noir-lang/noirc_abi";
 
 const require = createRequire(import.meta.url);
 
-const circuit = require("../circuit/target/circuit.json");
+const circuit = require("../circuits/sum3-circuit/target/circuit.json");
 
 // Load WASM as bytes
 const acvmWasm = readFileSync(
@@ -95,8 +95,8 @@ describe("ZK-gated decryption", () => {
 			join(__dirname, "./lit-actions/litAction.js"),
 			"utf-8",
 		);
-		ipfsCid = await uploadLitActionToIpfs(litActionCode);
-		// ipfsCid = "QmeVnU3Kr6wFeQBy9FLFp57gqD32BR1Bg4GyWSKSA3pgfH";
+		// ipfsCid = await uploadLitActionToIpfs(litActionCode);
+		ipfsCid = "QmZrzCgE647hmhJETYUFKEQruBYYdna54Z5AZvvHPpsNFx";
 		console.log(`✅ Lit Action uploaded to IPFS with CID: ${ipfsCid}`);
 
 		// Deploy the Verifier contract
@@ -108,8 +108,8 @@ describe("ZK-gated decryption", () => {
 			verifierContractAddress = deployment.verifierAddress;
 			zkGateAddress = deployment.zkGateAddress;
 		} else {
-			verifierContractAddress = "0x4aa8309d15c7101fcbfece280ac34b1564c05445";
-			zkGateAddress = "0x41341ec1a3b4f2f1c711e603b9a57b8d2540b226";
+			verifierContractAddress = "0x397813734a92d1f14ec28b2c5fefd3e94be740be";
+			zkGateAddress = "0x3997e3abeab13b0012d8d2f8cdf6ce4d2c253778";
 		}
 
 		// verifierAbi = deployment.verifierAbi;

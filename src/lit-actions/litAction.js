@@ -13,8 +13,5 @@ const go = async (zkGateAddress, verifierAddress) => {
 	);
 
 	const hasAccess = await zkGate.checkAccess(callerAddress, verifierAddress);
-
-	// Just return the boolean result as a string
-	// Lit will use this to decide whether to decrypt
 	return hasAccess.toString();
 };

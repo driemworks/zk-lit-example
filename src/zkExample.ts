@@ -12,6 +12,7 @@ import {
 } from "viem";
 import { createAccBuilder } from "@lit-protocol/access-control-conditions";
 import { baseSepolia, foundry, lineaSepolia, sepolia } from "viem/chains";
+import { encryptWithZkCondition } from "./encrypt.js";
 
 // const _litActionCode = async () => {
 //     try {
@@ -66,22 +67,14 @@ export const runZkExample = async ({
 		network: nagaDev,
 	});
 
-	// Build access control conditions using the uploaded Lit Action
-	// Pass contract address and required balance to the Lit Action
-	const acc = createAccBuilder()
-		.requireLitAction(
-			ipfsCid,
-			"go",
-			[zkGateAddress, verifierContractAddress],
-			"true",
-		)
-		.build();
-
-	const encryptedData = await litClient.encrypt({
-		dataToEncrypt: "The answer...",
-		unifiedAccessControlConditions: acc,
-		chain: "baseSepolia",
-	});
+	let plaintext = "This is my message";
+	let { encryptedData, acc } = await encryptWithZkCondition(
+		litClient,
+		plaintext,
+		verifierContractAddress,
+		zkGateAddress,
+		ipfsCid,
+	);
 	console.log("Encrypted data:", encryptedData);
 
 	const authManager = createAuthManager({
