@@ -171,66 +171,6 @@ describe("ZK-gated decryption", () => {
 		console.log("Public inputs count:", proofResult.publicInputs.length);
 		console.log("Public inputs:", publicInputs);
 
-		// Test verification locally first
-		const publicClient = createPublicClient({
-			chain: baseSepolia,
-			transport: http(rpcUrl),
-		});
-
-		const verifierAbi = [
-			{
-				name: "verify",
-				type: "function",
-				stateMutability: "view",
-				inputs: [
-					{ name: "_proof", type: "bytes" },
-					{ name: "_publicInputs", type: "bytes32[]" },
-				],
-				outputs: [{ type: "bool" }],
-			},
-		] as const;
-
-		console.log("\n=== Testing LOCAL verification ===");
-
-		try {
-			// sanity check
-			console.log("Verifying proof...");
-			const isValid = await backend.verifyProof(proofResult, {
-				verifierTarget: "evm",
-			});
-			if (!isValid) {
-				throw new Error("First Local verification failed - proof is invalid");
-			}
-
-			console.log("Local verification success!");
-			// verify against the contract directly
-			const verifierCode = await publicClient.getCode({
-				address: verifierContractAddress,
-			});
-			console.log("Verifier has code:", verifierCode && verifierCode !== "0x");
-
-			const callData = encodeFunctionData({
-				abi: verifierAbi,
-				functionName: "verify",
-				args: [proofHex, publicInputs],
-			});
-
-			const localResult = await publicClient.call({
-				to: verifierContractAddress,
-				data: callData,
-				// gas: 20_000_000n,
-			});
-
-			console.log("Local verification result:", localResult);
-
-			if (!localResult) {
-				throw new Error("Local verification failed - proof is invalid");
-			}
-		} catch (e) {
-			console.error("Local verification error:", e);
-			throw e;
-		}
-
 		console.log("\n=== Testing via Lit Action ===");
 		await runZkExample({
 			delegatorAccount,

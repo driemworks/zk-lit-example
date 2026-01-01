@@ -13,35 +13,13 @@ import {
 import { createAccBuilder } from "@lit-protocol/access-control-conditions";
 import { baseSepolia, foundry, lineaSepolia, sepolia } from "viem/chains";
 import { encryptWithZkCondition } from "./encrypt.js";
+import { decrypt } from "./decrypt.js";
+import { createRequire } from "module";
 
-// const _litActionCode = async () => {
-//     try {
-//         // Decrypt the content using decryptAndCombine
-//         const decryptedContent = await LitActions.decryptAndCombine({
-//             accessControlConditions: jsParams.accessControlConditions,
-//             ciphertext: jsParams.ciphertext,
-//             dataToEncryptHash: jsParams.dataToEncryptHash,
-//             // The authenticated identity from the authContext used
-//             // to make the decryption request is automatically used
-//             // for the decryption request
-//             authSig: null,
-//             chain: 'ethereum',
-//         });
+const require = createRequire(import.meta.url);
 
-//         // Use the decrypted content for your logic
-//         LitActions.setResponse({
-//             response: `Successfully decrypted: ${decryptedContent}`,
-//             success: true
-//         });
-//     } catch (error) {
-//         LitActions.setResponse({
-//             response: `Decryption failed: ${error.message}`,
-//             success: false
-//         });
-//     }
-// };
-
-// const litActionCode = `(${_litActionCode.toString()})();`;
+// dummy x + y = 3 circuit
+const circuit = require("../circuits/sum3-circuit/target/circuit.json");
 
 export const runZkExample = async ({
 	delegatorAccount,
@@ -51,7 +29,6 @@ export const runZkExample = async ({
 	proofHex,
 	// publicInputs,
 	ipfsCid,
-	// decryptIpfsCid,
 }: {
 	delegatorAccount: Account;
 	delegateeAccount: Account;
@@ -60,7 +37,6 @@ export const runZkExample = async ({
 	proofHex: string;
 	// publicInputs: string;
 	ipfsCid: string;
-	// decryptIpfsCid: string;
 }) => {
 	const litClient = await createLitClient({
 		// @ts-expect-error - TODO: fix this
@@ -138,165 +114,65 @@ export const runZkExample = async ({
 		},
 	] as const;
 
-	console.log("Submitting proof to ZKGate...");
-
-	// Simulate (sanity check)
-	const valid = await publicClient.simulateContract({
-		address: zkGateAddress as Address,
-		abi: zkGateAbi,
-		functionName: "submitAndVerify",
-		args: [
-			verifierContractAddress as Address,
-			proofHex as Hex,
-			[] as `0x${string}`[],
-		],
-		account: delegateeAccount,
-	});
-	console.log("Will succeed:", valid.result);
-
-	const callData = encodeFunctionData({
-		abi: zkGateAbi,
-		functionName: "submitAndVerify",
-		args: [
-			verifierContractAddress as Address,
-			proofHex as Hex,
-			[] as `0x${string}`[],
-		],
-	});
-
-	const gasPrice = await publicClient.getGasPrice();
-	const nonce = await publicClient.getTransactionCount({
-		address: walletClient.account.address,
-	});
-
-	const zkGateResultSim = await publicClient.call({
-		to: zkGateAddress as Hex,
-		data: callData,
-		gas: 20_000_000n,
-		gasPrice: gasPrice,
-		nonce,
-	});
-
-	console.log("simulated result: ", zkGateResultSim);
-	console.log("Delegatee address:", delegateeAccount.address);
-
-	// --------------------------
-	// directly call the verifier contract
-	const dgas = await publicClient.estimateContractGas({
-		address: verifierContractAddress as Hex,
-		abi: [
-			{
-				name: "verify",
-				type: "function",
-				stateMutability: "view",
-				inputs: [
-					{ name: "_proof", type: "bytes" },
-					{ name: "_publicInputs", type: "bytes32[]" },
-				],
-				outputs: [{ type: "bool" }],
-			},
-		],
-		functionName: "verify",
-		args: [proofHex as Hex, [] as `0x${string}`[]],
-		account: walletClient.account,
-	});
-
-	console.log("Estimated gas for verify:", dgas);
-
-	const directHash = await walletClient.writeContract({
-		address: verifierContractAddress as Hex,
-		abi: [
-			{
-				name: "verify",
-				type: "function",
-				stateMutability: "view",
-				inputs: [
-					{ name: "_proof", type: "bytes" },
-					{ name: "_publicInputs", type: "bytes32[]" },
-				],
-				outputs: [{ type: "bool" }],
-			},
-		],
-		functionName: "verify",
-		args: [proofHex as Hex, [] as `0x${string}`[]],
-		chain: baseSepolia,
-		gas: dgas + dgas / 10n,
-		gasPrice: gasPrice * 2n,
-	});
-
-	const newreceipt = await publicClient.waitForTransactionReceipt({
-		hash: directHash,
-	});
-	console.log("Direct verify tx status:", newreceipt.status);
-
-	// --------------------------
-	// make the actual call
-	const gas = await publicClient.estimateContractGas({
-		address: zkGateAddress as Hex,
-		abi: zkGateAbi,
-		functionName: "submitAndVerify",
-		args: [
-			verifierContractAddress as Address,
-			proofHex as Hex,
-			[] as `0x${string}`[],
-		],
-		account: walletClient.account,
-	});
-
-	console.log("Estimated gas:", gas);
-	const hash = await walletClient.writeContract({
-		address: zkGateAddress as Hex,
-		abi: zkGateAbi,
-		functionName: "submitAndVerify",
-		args: [
-			verifierContractAddress as Address,
-			proofHex as Hex,
-			[] as `0x${string}`[],
-		],
-		chain: baseSepolia,
-		gas: gas + gas / 10n, // 10% buffer
-		gasPrice: gasPrice * 2n,
-	});
-
-	// sanity check
-	// Right after transaction succeeds
-	const txReceipt = await publicClient.waitForTransactionReceipt({ hash });
-	console.log("Transaction confirmed in block:", txReceipt.blockNumber);
-	console.log("Transaction status:", txReceipt.status);
-
-	console.log("Transaction receipt:", txReceipt);
-	console.log("Logs:", txReceipt.logs);
-
-	// Also check what msg.sender actually was
-	console.log("Transaction from:", txReceipt.from);
-	console.log("Checking access for:", delegateeAccount.address);
-	console.log(
-		"Are they the same?",
-		txReceipt.from.toLowerCase() === delegateeAccount.address.toLowerCase(),
+	const inputs = { x: "1", y: "2" };
+	let decryptedContent = await decrypt(
+		publicClient,
+		walletClient,
+		litClient,
+		authContext,
+		encryptedData,
+		acc,
+		circuit,
+		inputs,
+		zkGateAddress as Hex,
+		verifierContractAddress as Hex,
+		zkGateAbi,
 	);
 
-	// Check immediately
-	const hasAccess = await publicClient.readContract({
-		address: zkGateAddress as Hex,
-		abi: zkGateAbi,
-		functionName: "checkAccess",
-		args: [delegateeAccount.address, verifierContractAddress as Address],
-		// blockNumber: txReceipt.blockNumber, // ← Check at the exact block
-	});
-	console.log("Has access (at tx block):", hasAccess);
+	// console.log("Submitting proof to ZKGate...");
 
-	console.log("Has access? :", hasAccess);
-	if (!hasAccess) {
-		throw new Error("Proof verification failed on-chain");
-	}
+	// const gasPrice = await publicClient.getGasPrice();
 
-	// TODO: can replace with decrypt call!
-	// as is, this doesn't actually decrypt anything, just queries the contract .
-	const decryptedContent = await litClient.decrypt({
-		...encryptedData,
-		unifiedAccessControlConditions: acc,
-		authContext: authContext,
-	});
+	// // --------------------------
+	// // make the actual call
+	// const gas = await publicClient.estimateContractGas({
+	// 	address: zkGateAddress as Hex,
+	// 	abi: zkGateAbi,
+	// 	functionName: "submitAndVerify",
+	// 	args: [
+	// 		verifierContractAddress as Address,
+	// 		proofHex as Hex,
+	// 		[] as `0x${string}`[],
+	// 	],
+	// 	account: walletClient.account,
+	// });
+
+	// console.log("Estimated gas:", gas);
+	// const hash = await walletClient.writeContract({
+	// 	address: zkGateAddress as Hex,
+	// 	abi: zkGateAbi,
+	// 	functionName: "submitAndVerify",
+	// 	args: [
+	// 		verifierContractAddress as Address,
+	// 		proofHex as Hex,
+	// 		[] as `0x${string}`[],
+	// 	],
+	// 	chain: baseSepolia,
+	// 	gas: gas + gas / 10n, // 10% buffer
+	// 	gasPrice: gasPrice * 2n,
+	// });
+
+	// // // sanity check
+	// // // Right after transaction succeeds
+	// const txReceipt = await publicClient.waitForTransactionReceipt({ hash });
+	// console.log("Transaction confirmed in block:", txReceipt.blockNumber);
+	// console.log("Transaction status:", txReceipt.status);
+
+	// const decryptedContent = await litClient.decrypt({
+	// 	...encryptedData,
+	// 	unifiedAccessControlConditions: acc,
+	// 	authContext: authContext,
+	// });
 
 	console.log("Decrypted:", decryptedContent);
 };
