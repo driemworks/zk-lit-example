@@ -1,86 +1,132 @@
+// src/decrypt.ts
 import { Barretenberg, UltraHonkBackend } from "@aztec/bb.js";
-import { Noir } from "@noir-lang/noir_js";
-import { Address, Hex, toHex } from "viem";
-import { baseSepolia } from "viem/chains";
+import { CompiledCircuit, Noir } from "@noir-lang/noir_js";
+import {
+	type PublicClient,
+	type WalletClient,
+	type Hex,
+	type Address,
+	toHex,
+} from "viem";
+import { ZKGate } from "./interface/zkGate.js";
 
-export const decrypt = async (
-	publicClient: any,
-	walletClient: any,
-	litClient: any,
-	authContext: any,
-	ciphertext: string,
-	acc: any,
-	circuit: any,
-	privateInputs: any,
-	zkGateAddress: Hex,
-	verifierContractAddress: Hex,
-	zkGateAbi: any,
-) => {
-	// prepare the proof
-	let api = await Barretenberg.new({ threads: 1 });
+export interface DecryptParams {
+	// Clients
+	publicClient: PublicClient;
+	walletClient: WalletClient;
+	litClient: any;
+	zkGate: ZKGate;
+
+	// Vault info
+	vaultId: `0x${string}`;
+	nullifier: `0x${string}`;
+
+	// Circuit
+	circuit: CompiledCircuit;
+	privateInputs: Record<string, any>;
+
+	// LIT
+	ciphertext: any;
+	accessControlConditions: any;
+	authContext: any;
+}
+
+export interface DecryptResult {
+	txHash: Hex;
+	txReceipt: any;
+	decryptedData: any;
+}
+
+export async function decrypt(params: DecryptParams): Promise<DecryptResult> {
+	const {
+		publicClient,
+		walletClient,
+		litClient,
+		zkGate: zkgate,
+		vaultId,
+		nullifier,
+		circuit,
+		privateInputs,
+		ciphertext,
+		accessControlConditions,
+		authContext,
+	} = params;
+
+	// 1. Generate ZK proof
+	console.log("Initializing Barretenberg...");
+	const api = await Barretenberg.new({ threads: 1 });
+	const backend = new UltraHonkBackend(circuit.bytecode, api);
+	const noir = new Noir(circuit);
+
+	console.log("Generating witness...");
+	const { witness } = await noir.execute(privateInputs);
+
+	console.log("Generating proof...");
+	const proofResult = await backend.generateProof(witness, {
+		keccak: true,
+	});
+
+	const proofHex: Hex = toHex(proofResult.proof);
+	console.log("Proof generated:", proofHex.slice(0, 66) + "...");
+
+	// 2. Submit proof to ZKGate
+	console.log("Submitting proof to ZKGate...");
+	const txHash = await zkgate.submitProof(vaultId, nullifier, proofHex);
+
+	console.log("Waiting for transaction confirmation...");
+	const txReceipt = await zkgate.waitForTransaction(txHash);
+
+	if (txReceipt.status !== "success") {
+		throw new Error(`Transaction failed: ${txReceipt.status}`);
+	}
+
+	console.log("Transaction confirmed in block:", txReceipt.blockNumber);
+
+	// sanity check: verify access was granted
+	const account = walletClient.account;
+	if (!account) throw new Error("Wallet account required");
+
+	// sanity check
+	const hasAccess = await zkgate.checkAccess(vaultId, account.address);
+	if (!hasAccess) {
+		throw new Error("Access not granted after proof submission");
+	}
+
+	// try to decrypt
+	console.log("Requesting decryption from LIT...");
+	const decryptedResponse = await litClient.decrypt({
+		ciphertext: ciphertext.ciphertext,
+		dataToEncryptHash: ciphertext.dataToEncryptHash,
+		unifiedAccessControlConditions: accessControlConditions,
+		authContext,
+		chain: "baseSepolia",
+	});
+
+	console.log("Decryption successful");
+
+	return {
+		txHash,
+		txReceipt,
+		decryptedData: decryptedResponse,
+	};
+}
+
+// Convenience function for just generating the proof without submitting
+export async function generateProof(
+	circuit: CompiledCircuit,
+	privateInputs: Record<string, any>,
+): Promise<{ proof: Hex; publicInputs: string[] }> {
+	const api = await Barretenberg.new({ threads: 1 });
 	const backend = new UltraHonkBackend(circuit.bytecode, api);
 	const noir = new Noir(circuit);
 
 	const { witness } = await noir.execute(privateInputs);
-	console.log("Generated witness");
-
 	const proofResult = await backend.generateProof(witness, {
-		verifierTarget: "evm",
-	});
-	console.log("Generated proof");
-
-	// const proofBytes = proofResult.proof;
-	const proofHex: Hex = toHex(proofResult.proof);
-	// const publicInputs = proofResult.publicInputs.map((input) => {
-	//     const clean = input.startsWith("0x") ? input.slice(2) : input;
-	//     return `0x${clean.padStart(64, "0")}` as `0x${string}`;
-	// });
-
-	const gasPrice = await publicClient.getGasPrice();
-	// submit to zk gate
-	const gas = await publicClient.estimateContractGas({
-		address: zkGateAddress,
-		abi: zkGateAbi,
-		functionName: "submitAndVerify",
-		args: [
-			verifierContractAddress as Address,
-			proofHex as Hex,
-			[] as `0x${string}`[],
-		],
-		account: walletClient.account,
+		keccak: true,
 	});
 
-	console.log("Estimated gas:", gas);
-	const hash = await walletClient.writeContract({
-		address: zkGateAddress as Hex,
-		abi: zkGateAbi,
-		functionName: "submitAndVerify",
-		args: [
-			verifierContractAddress as Address,
-			proofHex as Hex,
-			[] as `0x${string}`[],
-		],
-		chain: baseSepolia,
-		// 10% buffer
-		gas: gas + gas / 10n,
-		gasPrice: gasPrice * 2n,
-	});
-
-	// sanity check
-	// Right after transaction succeeds
-	const txReceipt = await publicClient.waitForTransactionReceipt({ hash });
-	console.log("Transaction confirmed in block:", txReceipt.blockNumber);
-	console.log("Transaction status:", txReceipt.status);
-
-	console.log("Transaction receipt:", txReceipt);
-	console.log("Logs:", txReceipt.logs);
-
-	// request decryption
-	const decryptedResponse = await litClient.decrypt({
-		data: ciphertext,
-		unifiedAccessControlConditions: acc,
-		authContext,
-		chain: "baseSepolia",
-	});
-	console.log("Decrypted response:", decryptedResponse);
-};
+	return {
+		proof: toHex(proofResult.proof),
+		publicInputs: proofResult.publicInputs,
+	};
+}

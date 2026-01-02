@@ -15,18 +15,28 @@ import { baseSepolia, foundry, lineaSepolia, sepolia } from "viem/chains";
 import { encryptWithZkCondition } from "./encrypt.js";
 import { decrypt } from "./decrypt.js";
 import { createRequire } from "module";
+import { downloadFromPinata, uploadToPinata } from "./uploadToIpfs.js";
+import { ZKGate } from "./interface/zkGate.js";
+import {
+	addressToBytes32Array,
+	computeNullifier,
+	hashPassword,
+	hexToBytes32Array,
+	stringToBytes32Array,
+} from "./interface/utils.js";
+import { StorageProvider } from "./interface/types.js";
 
 const require = createRequire(import.meta.url);
 
 // dummy x + y = 3 circuit
-const circuit = require("../circuits/sum3-circuit/target/circuit.json");
+const circuit = require("../circuits/preimage/target/preimage.json");
 
 export const runZkExample = async ({
 	delegatorAccount,
 	delegateeAccount,
 	verifierContractAddress,
 	zkGateAddress,
-	proofHex,
+	// proofHex,
 	// publicInputs,
 	ipfsCid,
 }: {
@@ -34,25 +44,84 @@ export const runZkExample = async ({
 	delegateeAccount: Account;
 	verifierContractAddress: string;
 	zkGateAddress: string;
-	proofHex: string;
+	// proofHex: string;
 	// publicInputs: string;
 	ipfsCid: string;
 }) => {
+	const rpcUrl = process.env.CHAIN_RPC_URL;
+	if (!rpcUrl) throw new Error("CHAIN_RPC_URL required");
+
 	const litClient = await createLitClient({
 		// @ts-expect-error - TODO: fix this
 		network: nagaDev,
 	});
 
-	let plaintext = "This is my message";
-	let { encryptedData, acc } = await encryptWithZkCondition(
-		litClient,
-		plaintext,
-		verifierContractAddress,
-		zkGateAddress,
-		ipfsCid,
-	);
-	console.log("Encrypted data:", encryptedData);
+	// START ENCRYPTION FLOW
+	// create the vault
+	const doCreateVault = true;
 
+	const delegatorPublicClient = createPublicClient({ transport: http(rpcUrl) });
+	const delegatorWalletClient = createWalletClient({
+		account: delegatorAccount,
+		transport: http(rpcUrl),
+		chain: baseSepolia,
+	});
+
+	let zkGateClient = new ZKGate(
+		zkGateAddress as Address,
+		delegatorPublicClient,
+		delegatorWalletClient,
+	);
+	const password = "password";
+	const hashPass = hashPassword(password);
+	let vaultId =
+		"0x267f2dbc9ba7e67fadf7aa2fab672b8d006147d40acdc9450e045d0176baf415" as Hex;
+
+	if (doCreateVault) {
+		const fee = await zkGateClient.getVaultCreationFee();
+		const { hash, vaultId } = await zkGateClient.createVault(hashPass, fee);
+		console.log("created vault with id " + vaultId);
+		await zkGateClient.waitForTransaction(hash);
+
+		console.log("created vault with id " + vaultId);
+
+		let plaintext = "This is my message";
+		const { encryptedData, acc } = await encryptWithZkCondition(
+			litClient,
+			plaintext,
+			zkGateAddress,
+			vaultId,
+			ipfsCid,
+		);
+		const cid = await uploadToPinata("ciphertext", { encryptedData, acc });
+
+		console.log("ciphertext cid = " + cid);
+
+		// add cid to vault
+		const addEntryHash = await zkGateClient.addEntry(
+			vaultId,
+			cid,
+			"test",
+			StorageProvider.Pinata,
+		);
+		await zkGateClient.waitForTransaction(addEntryHash);
+
+		// sanity check
+		const entries = await zkGateClient.getAllEntries(vaultId);
+		console.log(
+			"entries:",
+			JSON.stringify(entries, (key, value) =>
+				typeof value === "bigint" ? value.toString() : value,
+			),
+		);
+	}
+	// add the ciphertext to IPFS
+
+	// END ENCRYPTION FLOW
+	// ---------------------------------------------------------------------------------
+	// ---------------------------------------------------------------------------------
+	// START DECRYPTION FLOW
+	// build auth context
 	const authManager = createAuthManager({
 		storage: storagePlugins.localStorageNode({
 			appName: "fangorn",
@@ -80,99 +149,57 @@ export const runZkExample = async ({
 
 	// submit proof on-chain
 	// === SUBMIT PROOF ON-CHAIN (delegatee) ===
-	const rpcUrl = process.env.CHAIN_RPC_URL;
-	if (!rpcUrl) throw new Error("CHAIN_RPC_URL required");
 
-	const publicClient = createPublicClient({ transport: http(rpcUrl) });
-
-	const walletClient = createWalletClient({
+	const delegateePublicClient = createPublicClient({ transport: http(rpcUrl) });
+	const delegateeWalletClient = createWalletClient({
 		account: delegateeAccount,
 		transport: http(rpcUrl),
+		chain: baseSepolia,
 	});
 
-	const zkGateAbi = [
-		{
-			name: "submitAndVerify",
-			type: "function",
-			stateMutability: "nonpayable",
-			inputs: [
-				{ name: "verifier", type: "address" },
-				{ name: "proof", type: "bytes" },
-				{ name: "publicInputs", type: "bytes32[]" },
-			],
-			outputs: [{ type: "bool" }],
-		},
-		{
-			name: "checkAccess",
-			type: "function",
-			stateMutability: "view",
-			inputs: [
-				{ name: "user", type: "address" },
-				{ name: "verifier", type: "address" },
-			],
-			outputs: [{ type: "bool" }],
-		},
-	] as const;
-
-	const inputs = { x: "1", y: "2" };
-	let decryptedContent = await decrypt(
-		publicClient,
-		walletClient,
-		litClient,
-		authContext,
-		encryptedData,
-		acc,
-		circuit,
-		inputs,
-		zkGateAddress as Hex,
-		verifierContractAddress as Hex,
-		zkGateAbi,
+	zkGateClient = new ZKGate(
+		zkGateAddress as Address,
+		delegateePublicClient,
+		delegateeWalletClient,
 	);
 
-	// console.log("Submitting proof to ZKGate...");
+	const storedHash = await zkGateClient.getVaultPasswordHash(vaultId);
+	console.log("storedHash:", storedHash);
+	console.log("hashPass:", hashPass as Hex);
+	console.log("Match:", storedHash.toLowerCase() === hashPass.toLowerCase());
 
-	// const gasPrice = await publicClient.getGasPrice();
+	// fetch encryptedData from IPFS based on (vaultId, tag)
+	// this will just look at the first item in the vault
+	const entries = await zkGateClient.getAllEntries(vaultId);
+	const cidToFetch = entries[0].cid;
+	const { encryptedData, acc } = await downloadFromPinata(cidToFetch);
+	console.log("got data: " + JSON.stringify(encryptedData));
+	console.log("got acc: " + acc);
 
-	// // --------------------------
-	// // make the actual call
-	// const gas = await publicClient.estimateContractGas({
-	// 	address: zkGateAddress as Hex,
-	// 	abi: zkGateAbi,
-	// 	functionName: "submitAndVerify",
-	// 	args: [
-	// 		verifierContractAddress as Address,
-	// 		proofHex as Hex,
-	// 		[] as `0x${string}`[],
-	// 	],
-	// 	account: walletClient.account,
-	// });
+	const userAddress = delegateeWalletClient.account.address;
+	const nullifier = computeNullifier(password, userAddress, vaultId);
 
-	// console.log("Estimated gas:", gas);
-	// const hash = await walletClient.writeContract({
-	// 	address: zkGateAddress as Hex,
-	// 	abi: zkGateAbi,
-	// 	functionName: "submitAndVerify",
-	// 	args: [
-	// 		verifierContractAddress as Address,
-	// 		proofHex as Hex,
-	// 		[] as `0x${string}`[],
-	// 	],
-	// 	chain: baseSepolia,
-	// 	gas: gas + gas / 10n, // 10% buffer
-	// 	gasPrice: gasPrice * 2n,
-	// });
+	const privateInputs = {
+		password: stringToBytes32Array(password),
+		expected_hash: hexToBytes32Array(hashPass),
+		user_address: addressToBytes32Array(userAddress),
+		vault_id: hexToBytes32Array(vaultId),
+		nullifier: hexToBytes32Array(nullifier),
+	};
 
-	// // // sanity check
-	// // // Right after transaction succeeds
-	// const txReceipt = await publicClient.waitForTransactionReceipt({ hash });
-	// console.log("Transaction confirmed in block:", txReceipt.blockNumber);
-	// console.log("Transaction status:", txReceipt.status);
+	const result = await decrypt({
+		publicClient: delegateePublicClient,
+		walletClient: delegateeWalletClient,
+		litClient,
+		zkGate: zkGateClient,
+		vaultId,
+		nullifier: nullifier,
+		circuit,
+		privateInputs,
+		ciphertext: encryptedData,
+		accessControlConditions: acc,
+		authContext,
+	});
 
-	// const decryptedContent = await litClient.decrypt({
-	// 	...encryptedData,
-	// 	unifiedAccessControlConditions: acc,
-	// 	authContext: authContext,
-	// });
-
-	console.log("Decrypted:", decryptedContent);
+	console.log("Decrypted:", result.decryptedData);
 };

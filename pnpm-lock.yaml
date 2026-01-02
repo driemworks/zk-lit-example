@@ -31,6 +31,9 @@ importers:
       '@lit-protocol/networks':
         specifier: ^8.3.2
         version: 8.3.2(patch_hash=621124717335d991e636f1c1035247fecc860128597400b94cb26ef939707be1)(typescript@5.9.3)(viem@2.41.2(typescript@5.9.3)(zod@3.24.3))
+      '@noble/hashes':
+        specifier: ^2.0.1
+        version: 2.0.1
       '@noir-lang/acvm_js':
         specifier: 1.0.0-beta.16
         version: 1.0.0-beta.16
@@ -80,6 +83,9 @@ importers:
       '@vitest/eslint-plugin':
         specifier: 1.5.1
         version: 1.5.1(eslint@9.39.1(jiti@2.6.1))(typescript@5.9.3)(vitest@4.0.15(@types/node@24.10.1)(jiti@2.6.1)(yaml@2.8.2))
+      blake3-js:
+        specifier: ^0.0.5
+        version: 0.0.5
       eslint:
         specifier: 9.39.1
         version: 9.39.1(jiti@2.6.1)
@@ -1043,6 +1049,10 @@ packages:
     resolution: {integrity: sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A==}
     engines: {node: ^14.21.3 || >=16}
 
+  '@noble/hashes@2.0.1':
+    resolution: {integrity: sha512-XlOlEbQcE9fmuXxrVTXCTlG2nlRXa9Rj3rr5Ue/+tX+nmkgbX720YHh0VR3hBF9xDvwnb8D2shVGOwNx+ulArw==}
+    engines: {node: '>= 20.19.0'}
+
   '@nodeutils/defaults-deep@1.1.0':
     resolution: {integrity: sha512-gG44cwQovaOFdSR02jR9IhVRpnDP64VN6JdjYJTfNz4J4fWn7TQnmrf22nSjRqlwlxPcW8PL/L3KbJg3tdwvpg==}
 
@@ -1949,6 +1959,9 @@ packages:
 
   bl@5.1.0:
     resolution: {integrity: sha512-tv1ZJHLfTDnXE6tMHv73YgSJaWR2AFuPwMntBe7XL/GBFHnT0CLnsHMogfk5+GzCDC5ZWarSCYaIGATZt9dNsQ==}
+
+  blake3-js@0.0.5:
+    resolution: {integrity: sha512-ptT1WvDd+CKDRO+Ea7u8PekEaWd0otmZOj1eAbBzABkfNP1qDA1p0GGRMeMzTM7lUig9cFIBCMwVgmKaY1fTkQ==}
 
   blakejs@1.2.1:
     resolution: {integrity: sha512-QXUSXI3QVc/gJME0dBpXrag1kbzOqCjCX8/b54ntNyW6sjtoqxqRk3LTmXzaJoh71zMsDCjM+47jS7XiwN/+fQ==}
@@ -6323,6 +6336,8 @@ snapshots:
 
   '@noble/hashes@1.8.0': {}
 
+  '@noble/hashes@2.0.1': {}
+
   '@nodeutils/defaults-deep@1.1.0':
     dependencies:
       lodash: 4.17.21
@@ -7165,6 +7180,8 @@ snapshots:
       buffer: 6.0.3
       inherits: 2.0.4
       readable-stream: 3.6.2
+
+  blake3-js@0.0.5: {}
 
   blakejs@1.2.1: {}
 

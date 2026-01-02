@@ -8,20 +8,17 @@ import {
 	type Account,
 	type Address,
 	type Hex,
+	encodeDeployData,
+	parseEther,
 } from "viem";
 import solc from "solc";
 import { Barretenberg, UltraHonkBackend } from "@aztec/bb.js";
-import {
-	baseSepolia,
-	foundry,
-	lineaSepolia,
-	scrollSepolia,
-	sepolia,
-} from "viem/chains";
+import { baseSepolia } from "viem/chains";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const circuit = require("../circuits/sum3-circuit/target/circuit.json");
+// const circuit = require("../circuits/sum3-circuit/target/circuit.json");
+const circuit = require("../circuits/preimage/target/preimage.json");
 
 const currentChain = baseSepolia;
 
@@ -41,7 +38,7 @@ async function compileVerifier(): Promise<
 	const input = {
 		language: "Solidity",
 		sources: {
-			"Verifier.sol": { content: verifierSource },
+			"PreimageVerifier.sol": { content: verifierSource },
 		},
 		settings: {
 			metadata: {
@@ -67,7 +64,7 @@ async function compileVerifier(): Promise<
 
 	const contracts: Record<string, { abi: any; bytecode: string }> = {};
 	for (const [name, contract] of Object.entries(
-		output.contracts["Verifier.sol"],
+		output.contracts["PreimageVerifier.sol"],
 	)) {
 		contracts[name] = {
 			abi: (contract as any).abi,
@@ -255,7 +252,17 @@ export async function deployVerifier({
 /**
  * Deploys ZKGate (universal, verifier-agnostic)
  */
-export async function deployZKGate({ account }: { account: Account }): Promise<{
+export async function deployZKGate({
+	account,
+	verifierAddress,
+	treasuryAddress,
+	vaultCreationFee,
+}: {
+	account: Account;
+	verifierAddress: Address;
+	treasuryAddress: Address;
+	vaultCreationFee: bigint;
+}): Promise<{
 	zkGateAddress: Address;
 	zkGateAbi: any;
 }> {
@@ -270,26 +277,31 @@ export async function deployZKGate({ account }: { account: Account }): Promise<{
 	const walletClient = createWalletClient({ account, transport: http(rpcUrl) });
 
 	console.log("Deploying ZKGate...");
-	const gasPrice = await publicClient.getGasPrice();
 
+	// Encode bytecode + constructor args
+	const deployData = encodeDeployData({
+		abi: zkGate.abi,
+		bytecode: `0x${zkGate.bytecode}` as Hex,
+		args: [verifierAddress, treasuryAddress, vaultCreationFee],
+	});
+
+	const gasPrice = await publicClient.getGasPrice();
 	const gasEstimate = await publicClient.estimateGas({
-		data: `0x${zkGate.bytecode}` as Hex,
+		data: deployData,
 		account: walletClient.account.address,
 	});
 
-	let nonce = await publicClient.getTransactionCount({
-		address: walletClient.account.address,
-	});
 	const zkGateHash = await walletClient.sendTransaction({
-		data: `0x${zkGate.bytecode}` as Hex,
+		data: deployData,
 		gas: gasEstimate + gasEstimate / 10n,
 		gasPrice: gasPrice,
-		// nonce: nonce + 1,
 		chain: currentChain,
 	});
+
 	const zkGateReceipt = await publicClient.waitForTransactionReceipt({
 		hash: zkGateHash,
 	});
+
 	const zkGateAddress = zkGateReceipt.contractAddress!;
 	console.log(`ZKGate deployed: ${zkGateAddress}`);
 
@@ -313,7 +325,14 @@ export async function deployContracts({
 	zkGateAbi: any;
 }> {
 	const { verifierAddress, verifierAbi } = await deployVerifier({ account });
-	const { zkGateAddress, zkGateAbi } = await deployZKGate({ account });
+	const { zkGateAddress, zkGateAbi } = await deployZKGate({
+		account,
+		verifierAddress: verifierAddress,
+		// or a dedicated treasury
+		treasuryAddress: account.address,
+		// $1 equivalent or w/e
+		vaultCreationFee: parseEther("0.001"),
+	});
 
 	return {
 		verifierAddress,
