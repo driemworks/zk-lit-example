@@ -15,6 +15,7 @@ export interface DecryptParams {
 	publicClient: PublicClient;
 	walletClient: WalletClient;
 	litClient: any;
+	ipfsCid: any;
 	zkGate: ZKGate;
 
 	// Vault info
@@ -42,6 +43,7 @@ export async function decrypt(params: DecryptParams): Promise<DecryptResult> {
 		publicClient,
 		walletClient,
 		litClient,
+		ipfsCid,
 		zkGate: zkgate,
 		vaultId,
 		nullifier,
@@ -94,20 +96,32 @@ export async function decrypt(params: DecryptParams): Promise<DecryptResult> {
 
 	// try to decrypt
 	console.log("Requesting decryption from LIT...");
-	const decryptedResponse = await litClient.decrypt({
-		ciphertext: ciphertext.ciphertext,
-		dataToEncryptHash: ciphertext.dataToEncryptHash,
-		unifiedAccessControlConditions: accessControlConditions,
-		authContext,
-		chain: "baseSepolia",
-	});
+	// const decryptedResponse = await litClient.decrypt({
+	// 	ciphertext: ciphertext.ciphertext,
+	// 	dataToEncryptHash: ciphertext.dataToEncryptHash,
+	// 	unifiedAccessControlConditions: accessControlConditions,
+	// 	authContext,
+	// 	chain: "baseSepolia",
+	// });
 
-	console.log("Decryption successful");
+	// console.log("Decryption successful");
+
+	const result = await litClient.executeJs({
+		ipfsId: "CID_OF_YOUR_GUARD_CODE",
+		authContext,
+		jsParams: {
+			ciphertext: ciphertext.ciphertext,
+			dataToEncryptHash: ciphertext.dataToEncryptHash,
+			acc,
+			requestedCid,
+		},
+	});
+	console.log(result.response); // This is your plaintext
 
 	return {
 		txHash,
 		txReceipt,
-		decryptedData: decryptedResponse,
+		decryptedData: "",
 	};
 }
 
