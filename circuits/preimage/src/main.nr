@@ -3,6 +3,7 @@
 use dep::keccak256::keccak256;
 use dep::poseidon2;
 use dep::std;
+use std::hash::pedersen_hash;
 
 // Merkle tree depth
 // 8 levels => 2^8 = 256 max CIDs, 16 levels => 2^16 = 65536 max CIDs
@@ -58,10 +59,17 @@ fn compute_merkle_root(leaf: Field, path_indices: [Field], siblings: [Field]) ->
             (current, siblings[i])
         };
 
-        // make sure the contract uses poseidon too!!!
         current = poseidon2::bn254::hash_2([hash_left, hash_right]);
+        // make sure the ts code uses poseidon too!!!
+        // current = poseidon2::bn254::hash_2([hash_left, hash_right]);
     }
     current
+}
+
+#[test]
+fn test_poseidon_vectors() {
+    let h1 = pedersen_hash([12345, 2]);
+    std::println(h1);
 }
 
 #[test]

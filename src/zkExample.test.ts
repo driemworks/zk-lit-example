@@ -19,7 +19,23 @@ import { createRequire } from "module";
 // Import everything to see what's available
 import * as acvm from "@noir-lang/acvm_js";
 import * as noirc from "@noir-lang/noirc_abi";
+import { poseidon2 } from "poseidon-lite/poseidon2";
+import { poseidon1 } from "poseidon-lite";
 const require = createRequire(import.meta.url);
+
+import { poseidon2Hash } from "@zkpassport/poseidon2";
+
+import { Barretenberg, BarretenbergSync, UltraHonkBackend } from "@aztec/bb.js";
+import { BarretenbergBackend } from "@noir-lang/backend_barretenberg";
+import { Noir } from "@noir-lang/noir_js";
+// import type { Fr } from '@aztec/bb.js';
+
+const poseidon2Circuit = require("../circuits/poseiden2_binding/target/poseiden2_binding.json");
+
+// function pedersenHash(left: bigint, right: bigint): bigint {
+//     // Pedersen IS exposed in bb.js
+//     return bb.pedersenHash([left, right]);
+// }
 
 // Load WASM as bytes
 const acvmWasm = readFileSync(
@@ -55,7 +71,7 @@ const getEnv = (key: string) => {
 	return value;
 };
 
-const doDeploy = true;
+const doDeploy = false;
 
 describe("ZK-gated decryption", () => {
 	let rpcUrl: string;
@@ -135,46 +151,35 @@ describe("ZK-gated decryption", () => {
 
 	//     expect(didFail).toBe(true);
 	// }, 120000);
-
 	it("should succeed to decrypt when the proof is valid", async () => {
-		// const api = await Barretenberg.new({ threads: 1 });
-		// const backend = new UltraHonkBackend(circuit.bytecode, api);
-		// const noir = new Noir(circuit);
+		let input = [12345n, 2n];
 
-		// const inputs = { x: "1", y: "2" };
+		const api = await Barretenberg.new({ threads: 1 });
+		const backend = new UltraHonkBackend(poseidon2Circuit.bytecode, api);
+		const noirPoseidon = new Noir(poseidon2Circuit);
 
-		// const { witness } = await noir.execute(inputs);
-		// console.log("Generated witness");
-
-		// const proofResult = await backend.generateProof(witness, {
-		// 	verifierTarget: "evm",
-		// });
-		// console.log("Generated proof");
-
-		// const proofBytes = proofResult.proof;
-		// const proofHex: Hex = toHex(proofResult.proof);
-
-		// const publicInputs = proofResult.publicInputs.map((input) => {
-		// 	const clean = input.startsWith("0x") ? input.slice(2) : input;
-		// 	return `0x${clean.padStart(64, "0")}` as `0x${string}`;
-		// });
-
-		// console.log("Proof hex length:", proofHex.length);
-		// console.log("Original proof length:", proofBytes.length);
-		// console.log("Proof byte length:", proofResult.proof.length);
-		// console.log("Public inputs count:", proofResult.publicInputs.length);
-		// console.log("Public inputs:", publicInputs);
-
-		console.log("\n=== Testing via Lit Action ===");
-		await runZkExample({
-			delegatorAccount,
-			delegateeAccount,
-			verifierContractAddress,
-			zkGateAddress,
-			// proofHex: proofHex,
-			ipfsCid,
-			// decryptIpfsCid,
+		const hashPrivate = await noirPoseidon.execute({
+			value1: 12345,
+			value2: 2,
 		});
+
+		// const hash = await pedersenHash({
+		// 	inputs: [],
+		// 	hashIndex: 1,
+		// });
+		// let hash = poseidon2Hash(input);
+		console.log(`${JSON.stringify(hashPrivate.returnValue)}`);
+
+		// console.log("\n=== Testing via Lit Action ===");
+		// await runZkExample({
+		// 	delegatorAccount,
+		// 	delegateeAccount,
+		// 	verifierContractAddress,
+		// 	zkGateAddress,
+		// 	// proofHex: proofHex,
+		// 	ipfsCid,
+		// 	// decryptIpfsCid,
+		// });
 
 		console.log("Decryption succeeded!");
 	}, 700_000);
