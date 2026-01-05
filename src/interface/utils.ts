@@ -1,5 +1,8 @@
 // src/utils.ts
+import { Barretenberg } from "@aztec/bb.js";
 import { blake3 } from "@noble/hashes/blake3.js";
+import { UltraHonkBackend } from "@noir-lang/backend_barretenberg";
+import { Noir } from "@noir-lang/noir_js";
 import {
 	keccak256,
 	toBytes,
@@ -9,6 +12,10 @@ import {
 	bytesToHex,
 	Hex,
 } from "viem";
+
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
+const poseidon2Circuit = require("../../circuits/poseiden2_binding/target/poseiden2_binding.json");
 
 export function hashPassword(password: string): Hex {
 	const padded = password.padEnd(32, "\0");
@@ -50,6 +57,46 @@ export function deriveVaultId(
 			owner,
 		]),
 	);
+}
+
+import * as acvm from "@noir-lang/acvm_js";
+import * as noirc from "@noir-lang/noirc_abi";
+import { readFileSync } from "fs";
+
+// Load WASM as bytes
+const acvmWasm = readFileSync(
+	require.resolve("@noir-lang/acvm_js/web/acvm_js_bg.wasm"),
+);
+const noircWasm = readFileSync(
+	require.resolve("@noir-lang/noirc_abi/web/noirc_abi_wasm_bg.wasm"),
+);
+
+// wasm-bindgen generated code often uses __wbg_init or initSync
+const initAcvm =
+	(acvm as any).__wbg_init || (acvm as any).initSync || (acvm as any).default;
+const initNoirc =
+	(noirc as any).__wbg_init ||
+	(noirc as any).initSync ||
+	(noirc as any).default;
+
+if (typeof initAcvm === "function") {
+	await initAcvm(acvmWasm);
+}
+if (typeof initNoirc === "function") {
+	await initNoirc(noircWasm);
+}
+
+export async function poseidon2Hash(left: number, right: number) {
+	// const api = await Barretenberg.new({ threads: 1 });
+	// const backend = new UltraHonkBackend(poseidon2Circuit.bytecode, api);
+	const noirPoseidon = new Noir(poseidon2Circuit);
+
+	const hashPrivate = await noirPoseidon.execute({
+		value1: left,
+		value2: right,
+	});
+
+	return hashPrivate.returnValue;
 }
 
 // String to 32-byte array

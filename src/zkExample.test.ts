@@ -23,11 +23,10 @@ import { poseidon2 } from "poseidon-lite/poseidon2";
 import { poseidon1 } from "poseidon-lite";
 const require = createRequire(import.meta.url);
 
-import { poseidon2Hash } from "@zkpassport/poseidon2";
-
 import { Barretenberg, BarretenbergSync, UltraHonkBackend } from "@aztec/bb.js";
 import { BarretenbergBackend } from "@noir-lang/backend_barretenberg";
 import { Noir } from "@noir-lang/noir_js";
+import { poseidon2Hash } from "./interface/utils.js";
 // import type { Fr } from '@aztec/bb.js';
 
 const poseidon2Circuit = require("../circuits/poseiden2_binding/target/poseiden2_binding.json");
@@ -152,24 +151,9 @@ describe("ZK-gated decryption", () => {
 	//     expect(didFail).toBe(true);
 	// }, 120000);
 	it("should succeed to decrypt when the proof is valid", async () => {
-		let input = [12345n, 2n];
-
-		const api = await Barretenberg.new({ threads: 1 });
-		const backend = new UltraHonkBackend(poseidon2Circuit.bytecode, api);
-		const noirPoseidon = new Noir(poseidon2Circuit);
-
-		const hashPrivate = await noirPoseidon.execute({
-			value1: 12345,
-			value2: 2,
-		});
-
-		// const hash = await pedersenHash({
-		// 	inputs: [],
-		// 	hashIndex: 1,
-		// });
-		// let hash = poseidon2Hash(input);
-		console.log(`${JSON.stringify(hashPrivate.returnValue)}`);
-
+		let input = [12345, 2];
+		let hash = await poseidon2Hash(12345, 1);
+		console.log(hash);
 		// console.log("\n=== Testing via Lit Action ===");
 		// await runZkExample({
 		// 	delegatorAccount,
