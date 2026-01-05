@@ -19,22 +19,7 @@ import { createRequire } from "module";
 // Import everything to see what's available
 import * as acvm from "@noir-lang/acvm_js";
 import * as noirc from "@noir-lang/noirc_abi";
-import { poseidon2 } from "poseidon-lite/poseidon2";
-import { poseidon1 } from "poseidon-lite";
 const require = createRequire(import.meta.url);
-
-import { Barretenberg, BarretenbergSync, UltraHonkBackend } from "@aztec/bb.js";
-import { BarretenbergBackend } from "@noir-lang/backend_barretenberg";
-import { Noir } from "@noir-lang/noir_js";
-import { poseidon2Hash } from "./interface/utils.js";
-// import type { Fr } from '@aztec/bb.js';
-
-const poseidon2Circuit = require("../circuits/poseiden2_binding/target/poseiden2_binding.json");
-
-// function pedersenHash(left: bigint, right: bigint): bigint {
-//     // Pedersen IS exposed in bb.js
-//     return bb.pedersenHash([left, right]);
-// }
 
 // Load WASM as bytes
 const acvmWasm = readFileSync(
@@ -70,7 +55,7 @@ const getEnv = (key: string) => {
 	return value;
 };
 
-const doDeploy = false;
+const doDeploy = true;
 
 describe("ZK-gated decryption", () => {
 	let rpcUrl: string;
@@ -110,9 +95,9 @@ describe("ZK-gated decryption", () => {
 			verifierContractAddress = deployment.verifierAddress;
 			zkGateAddress = deployment.zkGateAddress;
 		} else {
-			ipfsCid = "QmSraCu3rGq2gXzo6d36VQKRgQ1YLRsfqWHReSHkUKa54d";
-			verifierContractAddress = "0xe012716e8062a150d2218cc8b22e86b82c1bed04";
-			zkGateAddress = "0x0715919a144a49e6c284869b2547b9ea0205150f";
+			ipfsCid = "QmdUfVyBCChoWinGh1XbVkYrL3p5GMMMoqDmf1iCBPv42u";
+			verifierContractAddress = "0x49f7483e731514a746f0e4ef22df5a52c312d532";
+			zkGateAddress = "0x738e4bf543a8cc3789853e5c0b44334a13085bdd";
 		}
 
 		console.log(`✅ Lit Action uploaded to IPFS with CID: ${ipfsCid}`);
@@ -151,19 +136,20 @@ describe("ZK-gated decryption", () => {
 	//     expect(didFail).toBe(true);
 	// }, 120000);
 	it("should succeed to decrypt when the proof is valid", async () => {
-		let input = [12345, 2];
-		let hash = await poseidon2Hash(12345, 1);
-		console.log(hash);
-		// console.log("\n=== Testing via Lit Action ===");
-		// await runZkExample({
-		// 	delegatorAccount,
-		// 	delegateeAccount,
-		// 	verifierContractAddress,
-		// 	zkGateAddress,
-		// 	// proofHex: proofHex,
-		// 	ipfsCid,
-		// 	// decryptIpfsCid,
-		// });
+		// let input = [12345, 2];
+		// let hash = await poseidon2Hash(12345, 1);
+		// console.log(hash);
+
+		console.log("\n=== Testing via Lit Action ===");
+		await runZkExample({
+			delegatorAccount,
+			delegateeAccount,
+			verifierContractAddress,
+			zkGateAddress,
+			// proofHex: proofHex,
+			ipfsCid,
+			// decryptIpfsCid,
+		});
 
 		console.log("Decryption succeeded!");
 	}, 700_000);

@@ -1,7 +1,5 @@
 // src/utils.ts
-import { Barretenberg } from "@aztec/bb.js";
 import { blake3 } from "@noble/hashes/blake3.js";
-import { UltraHonkBackend } from "@noir-lang/backend_barretenberg";
 import { Noir } from "@noir-lang/noir_js";
 import {
 	keccak256,
@@ -15,7 +13,8 @@ import {
 
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
-const poseidon2Circuit = require("../../circuits/poseiden2_binding/target/poseiden2_binding.json");
+const poseidon1Circuit = require("../../circuits/poseiden1_hash/target/poseiden1_hash.json");
+const poseidon2Circuit = require("../../circuits/poseiden2_hash/target/poseiden2_hash.json");
 
 export function hashPassword(password: string): Hex {
 	const padded = password.padEnd(32, "\0");
@@ -59,44 +58,37 @@ export function deriveVaultId(
 	);
 }
 
-import * as acvm from "@noir-lang/acvm_js";
-import * as noirc from "@noir-lang/noirc_abi";
-import { readFileSync } from "fs";
+// The Prime Field Modulus for BN254
+const MODULUS =
+	21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
-// Load WASM as bytes
-const acvmWasm = readFileSync(
-	require.resolve("@noir-lang/acvm_js/web/acvm_js_bg.wasm"),
-);
-const noircWasm = readFileSync(
-	require.resolve("@noir-lang/noirc_abi/web/noirc_abi_wasm_bg.wasm"),
-);
+export async function poseidon1Hash(input: bigint): Promise<bigint> {
+	const noir = new Noir(poseidon1Circuit);
+	// Ensure input is < MODULUS
+	const safeInput = input < MODULUS ? input : input % MODULUS;
 
-// wasm-bindgen generated code often uses __wbg_init or initSync
-const initAcvm =
-	(acvm as any).__wbg_init || (acvm as any).initSync || (acvm as any).default;
-const initNoirc =
-	(noirc as any).__wbg_init ||
-	(noirc as any).initSync ||
-	(noirc as any).default;
-
-if (typeof initAcvm === "function") {
-	await initAcvm(acvmWasm);
-}
-if (typeof initNoirc === "function") {
-	await initNoirc(noircWasm);
-}
-
-export async function poseidon2Hash(left: number, right: number) {
-	// const api = await Barretenberg.new({ threads: 1 });
-	// const backend = new UltraHonkBackend(poseidon2Circuit.bytecode, api);
-	const noirPoseidon = new Noir(poseidon2Circuit);
-
-	const hashPrivate = await noirPoseidon.execute({
-		value1: left,
-		value2: right,
+	const { returnValue } = await noir.execute({
+		value: safeInput.toString(),
 	});
 
-	return hashPrivate.returnValue;
+	return BigInt(returnValue as string);
+}
+
+export async function poseidon2Hash(
+	left: bigint,
+	right: bigint,
+): Promise<bigint> {
+	const noir = new Noir(poseidon2Circuit);
+	// Ensure both inputs are < MODULUS
+	const safeLeft = left < MODULUS ? left : left % MODULUS;
+	const safeRight = right < MODULUS ? right : right % MODULUS;
+
+	const { returnValue } = await noir.execute({
+		value1: safeLeft.toString(),
+		value2: safeRight.toString(),
+	});
+
+	return BigInt(returnValue as string);
 }
 
 // String to 32-byte array

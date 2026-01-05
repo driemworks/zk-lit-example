@@ -1,3 +1,4 @@
+// src/zkExample.ts
 import { nagaDev } from "@lit-protocol/networks";
 import { createLitClient } from "@lit-protocol/lit-client";
 import { createAuthManager, storagePlugins } from "@lit-protocol/auth";
@@ -6,29 +7,25 @@ import {
 	Address,
 	createPublicClient,
 	createWalletClient,
-	encodeFunctionData,
 	Hex,
 	http,
 } from "viem";
-import { createAccBuilder } from "@lit-protocol/access-control-conditions";
-import { baseSepolia, foundry, lineaSepolia, sepolia } from "viem/chains";
+import { baseSepolia } from "viem/chains";
 import { encryptWithZkCondition } from "./encrypt.js";
 import { decrypt } from "./decrypt.js";
 import { createRequire } from "module";
-import { downloadFromPinata, uploadToPinata } from "./uploadToIpfs.js";
+import { uploadToPinata } from "./uploadToIpfs.js";
 import { ZKGate } from "./interface/zkGate.js";
+import { hashPassword, poseidon1Hash } from "./interface/utils.js";
+import { buildCircuitInputs, computeTagCommitment } from "./interface/proof.js";
 import {
-	addressToBytes32Array,
-	computeNullifier,
-	hashPassword,
-	hexToBytes32Array,
-	stringToBytes32Array,
-} from "./interface/utils.js";
-import { StorageProvider } from "./interface/types.js";
+	buildTreeFromLeaves,
+	fieldToHex,
+	hexToField,
+} from "./interface/merkle.js";
+import { VaultEntry, VaultManifest } from "./interface/types.js";
 
 const require = createRequire(import.meta.url);
-
-// dummy x + y = 3 circuit
 const circuit = require("../circuits/preimage/target/preimage.json");
 
 export const runZkExample = async ({
@@ -36,29 +33,25 @@ export const runZkExample = async ({
 	delegateeAccount,
 	verifierContractAddress,
 	zkGateAddress,
-	// proofHex,
-	// publicInputs,
 	ipfsCid,
 }: {
 	delegatorAccount: Account;
 	delegateeAccount: Account;
 	verifierContractAddress: string;
 	zkGateAddress: string;
-	// proofHex: string;
-	// publicInputs: string;
 	ipfsCid: string;
 }) => {
 	const rpcUrl = process.env.CHAIN_RPC_URL;
 	if (!rpcUrl) throw new Error("CHAIN_RPC_URL required");
+
+	console.log("\n========== STARTING ZK TEST ==========\n");
 
 	const litClient = await createLitClient({
 		// @ts-expect-error - TODO: fix this
 		network: nagaDev,
 	});
 
-	// START ENCRYPTION FLOW
-	// create the vault
-	const doCreateVault = true;
+	// ============== DELEGATOR SETUP ==============
 
 	const delegatorPublicClient = createPublicClient({ transport: http(rpcUrl) });
 	const delegatorWalletClient = createWalletClient({
@@ -72,56 +65,106 @@ export const runZkExample = async ({
 		delegatorPublicClient,
 		delegatorWalletClient,
 	);
-	const password = "password";
+
+	// ============== CONFIG ==============
+
+	const password = "test2";
+	const tag = "test-document";
+	const plaintext = "This is my secret message";
 	const hashPass = hashPassword(password);
-	let vaultId =
-		"0x267f2dbc9ba7e67fadf7aa2fab672b8d006147d40acdc9450e045d0176baf415" as Hex;
 
-	if (doCreateVault) {
-		const fee = await zkGateClient.getVaultCreationFee();
-		const { hash, vaultId } = await zkGateClient.createVault(hashPass, fee);
-		console.log("created vault with id " + vaultId);
-		await zkGateClient.waitForTransaction(hash);
+	// ============== 1. CREATE VAULT ==============
 
-		console.log("created vault with id " + vaultId);
+	console.log("1. Creating vault...");
+	const fee = await zkGateClient.getVaultCreationFee();
+	const { hash: createHash, vaultId } = await zkGateClient.createVault(
+		hashPass,
+		fee,
+	);
+	await zkGateClient.waitForTransaction(createHash);
+	console.log("✓ Vault created:", vaultId);
 
-		let plaintext = "This is my message";
-		const { encryptedData, acc } = await encryptWithZkCondition(
-			litClient,
-			plaintext,
-			zkGateAddress,
-			vaultId,
-			ipfsCid,
-		);
-		const cid = await uploadToPinata("ciphertext", { encryptedData, acc });
+	// ============== 2. COMPUTE TAG COMMITMENT ==============
 
-		console.log("ciphertext cid = " + cid);
+	console.log("\n2. Computing tag commitment...");
+	const { leaf } = await computeTagCommitment(vaultId, tag);
+	const cidCommitment = await poseidon1Hash(leaf);
+	const cidCommitmentHex = fieldToHex(cidCommitment);
+	console.log("✓ Leaf:", leaf.toString());
+	console.log("✓ CID Commitment:", cidCommitmentHex);
 
-		// add cid to vault
-		const addEntryHash = await zkGateClient.addEntry(
-			vaultId,
-			cid,
-			"test",
-			StorageProvider.Pinata,
-		);
-		await zkGateClient.waitForTransaction(addEntryHash);
+	// ============== 3. ENCRYPT DATA ==============
 
-		// sanity check
-		const entries = await zkGateClient.getAllEntries(vaultId);
-		console.log(
-			"entries:",
-			JSON.stringify(entries, (key, value) =>
-				typeof value === "bigint" ? value.toString() : value,
-			),
-		);
-	}
-	// add the ciphertext to IPFS
+	console.log("\n3. Encrypting data...");
+	console.log("\n3. Encrypting data...");
+	const { encryptedData, acc } = await encryptWithZkCondition(
+		litClient,
+		plaintext,
+		zkGateAddress,
+		vaultId,
+		cidCommitmentHex,
+		ipfsCid,
+	);
 
-	// END ENCRYPTION FLOW
-	// ---------------------------------------------------------------------------------
-	// ---------------------------------------------------------------------------------
-	// START DECRYPTION FLOW
-	// build auth context
+	// Upload encrypted data
+	const cid = await uploadToPinata(tag, { encryptedData, acc });
+	console.log("✓ Uploaded ciphertext CID:", cid);
+
+	// ============== 4. BUILD MERKLE TREE ==============
+
+	console.log("\n4. Building Merkle tree...");
+
+	// Build tree from leaves (as bigints)
+	const leaves = [leaf];
+	const { root, layers } = await buildTreeFromLeaves(leaves);
+	console.log("✓ Merkle root:", fieldToHex(root));
+
+	// ============== 5. CREATE & UPLOAD MANIFEST ==============
+
+	console.log("\n5. Creating manifest...");
+
+	// Create manifest with string values
+	const manifest: VaultManifest = {
+		version: 1,
+		poseidon_root: fieldToHex(root),
+		entries: [
+			{
+				tag,
+				cid,
+				index: 0,
+				commitment: cidCommitmentHex,
+				leaf: fieldToHex(leaf),
+			},
+		],
+		tree: layers.map((layer) => layer.map(fieldToHex)),
+	};
+
+	// Rate limit protection
+	await new Promise((f) => setTimeout(f, 2000));
+
+	const manifestCid = await uploadToPinata("manifest", manifest);
+	console.log("✓ Manifest CID:", manifestCid);
+
+	// ============== 6. UPDATE VAULT ON-CHAIN ==============
+
+	console.log("\n6. Updating vault on-chain...");
+	const updateHash = await zkGateClient.updateVault(
+		vaultId,
+		fieldToHex(root),
+		manifestCid,
+	);
+	await zkGateClient.waitForTransaction(updateHash);
+	console.log("✓ Vault updated");
+
+	console.log("\n========== ENCRYPTION COMPLETE ==========\n");
+
+	// Rate limit protection
+	await new Promise((f) => setTimeout(f, 3000));
+
+	console.log("\n========== STARTING DECRYPTION ==========\n");
+
+	// ============== 7. DELEGATEE SETUP ==============
+
 	const authManager = createAuthManager({
 		storage: storagePlugins.localStorageNode({
 			appName: "fangorn",
@@ -130,7 +173,6 @@ export const runZkExample = async ({
 		}),
 	});
 
-	// delegateeAccount needs AuthContext for decryption
 	const authContext = await authManager.createEoaAuthContext({
 		litClient,
 		config: {
@@ -147,9 +189,6 @@ export const runZkExample = async ({
 		},
 	});
 
-	// submit proof on-chain
-	// === SUBMIT PROOF ON-CHAIN (delegatee) ===
-
 	const delegateePublicClient = createPublicClient({ transport: http(rpcUrl) });
 	const delegateeWalletClient = createWalletClient({
 		account: delegateeAccount,
@@ -163,43 +202,47 @@ export const runZkExample = async ({
 		delegateeWalletClient,
 	);
 
-	const storedHash = await zkGateClient.getVaultPasswordHash(vaultId);
-	console.log("storedHash:", storedHash);
-	console.log("hashPass:", hashPass as Hex);
-	console.log("Match:", storedHash.toLowerCase() === hashPass.toLowerCase());
-
-	// fetch encryptedData from IPFS based on (vaultId, tag)
-	// this will just look at the first item in the vault
-	const entries = await zkGateClient.getAllEntries(vaultId);
-	const cidToFetch = entries[0].cid;
-	const { encryptedData, acc } = await downloadFromPinata(cidToFetch);
-	console.log("got data: " + JSON.stringify(encryptedData));
-	console.log("got acc: " + acc);
-
 	const userAddress = delegateeWalletClient.account.address;
-	const nullifier = computeNullifier(password, userAddress, vaultId);
 
-	const privateInputs = {
-		password: stringToBytes32Array(password),
-		expected_hash: hexToBytes32Array(hashPass),
-		user_address: addressToBytes32Array(userAddress),
-		vault_id: hexToBytes32Array(vaultId),
-		nullifier: hexToBytes32Array(nullifier),
-	};
+	// ============== 8. BUILD CIRCUIT INPUTS ==============
+
+	console.log("7. Building circuit inputs...");
+
+	// Use the manifest entry (strings)
+	const entry: VaultEntry = manifest.entries[0];
+
+	const {
+		inputs,
+		nullifier,
+		cidCommitment: computedCommitment,
+	} = await buildCircuitInputs(password, entry, userAddress, vaultId, manifest);
+
+	console.log("✓ Circuit inputs built");
+	console.log("✓ Nullifier:", nullifier);
+	console.log("✓ CID Commitment:", computedCommitment);
+
+	// ============== 9. DECRYPT ==============
+
+	console.log("\n8. Generating proof and decrypting...");
 
 	const result = await decrypt({
 		publicClient: delegateePublicClient,
 		walletClient: delegateeWalletClient,
 		litClient,
+		ipfsCid: "",
+		cidCommitment: computedCommitment,
 		zkGate: zkGateClient,
 		vaultId,
-		nullifier: nullifier,
+		nullifier,
 		circuit,
-		privateInputs,
+		privateInputs: inputs,
 		ciphertext: encryptedData,
 		accessControlConditions: acc,
 		authContext,
 	});
 
-	console.log("Decrypted:", result.decryptedData);
+	console.log("\n========== TEST PASSED ==========");
+	console.log("✓ Decrypted:", result.decryptedData);
+
+	return result;
 };

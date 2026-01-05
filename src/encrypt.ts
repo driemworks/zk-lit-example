@@ -5,12 +5,16 @@ export const encryptWithZkCondition = async (
 	plaintext: string,
 	zkGateAddress: string,
 	vaultId: string,
-	ipfsCid: string,
+	cidCommitment: string,
+	litActionCid: string,
 ) => {
-	// acc: the caller must have verified a proof under verifierContractAddress
-	// in the context of the zkgate contract
 	const acc = createAccBuilder()
-		.requireLitAction(ipfsCid, "go", [zkGateAddress, vaultId], "true")
+		.requireLitAction(
+			litActionCid,
+			"go",
+			[zkGateAddress, vaultId, cidCommitment],
+			"true",
+		)
 		.build();
 
 	const encryptedData = await litClient.encrypt({
@@ -18,10 +22,6 @@ export const encryptWithZkCondition = async (
 		unifiedAccessControlConditions: acc,
 		chain: "baseSepolia",
 	});
-	console.log("Encrypted data:", encryptedData);
 
-	return {
-		encryptedData,
-		acc,
-	};
+	return { encryptedData, acc };
 };

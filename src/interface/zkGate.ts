@@ -1,20 +1,20 @@
-// src/zkgate.ts
+// src/interface/zkGate.ts
 import {
 	type PublicClient,
 	type WalletClient,
 	type Address,
 	type Hash,
+	type Hex,
 	keccak256,
 	encodeAbiParameters,
 	parseAbiParameters,
 } from "viem";
-import { StorageProvider } from "./types.js";
 
-export interface VaultEntry {
-	cid: string;
-	tag: string;
-	provider: StorageProvider;
-	createdAt: bigint;
+export interface Vault {
+	passwordHash: `0x${string}`;
+	poseidonRoot: `0x${string}`;
+	manifestCid: string;
+	owner: Address;
 }
 
 const ZKGATE_ABI = [
@@ -26,26 +26,15 @@ const ZKGATE_ABI = [
 		inputs: [{ name: "passwordHash", type: "bytes32" }],
 		outputs: [{ name: "vaultId", type: "bytes32" }],
 	},
-	// Entry management
+	// Vault update
 	{
-		name: "addEntry",
+		name: "updateVault",
 		type: "function",
 		stateMutability: "nonpayable",
 		inputs: [
 			{ name: "vaultId", type: "bytes32" },
-			{ name: "cid", type: "string" },
-			{ name: "tag", type: "string" },
-			{ name: "provider", type: "uint8" },
-		],
-		outputs: [{ name: "entryIndex", type: "uint256" }],
-	},
-	{
-		name: "removeEntry",
-		type: "function",
-		stateMutability: "nonpayable",
-		inputs: [
-			{ name: "vaultId", type: "bytes32" },
-			{ name: "entryIndex", type: "uint256" },
+			{ name: "newRoot", type: "bytes32" },
+			{ name: "newManifestCid", type: "string" },
 		],
 		outputs: [],
 	},
@@ -56,6 +45,7 @@ const ZKGATE_ABI = [
 		stateMutability: "nonpayable",
 		inputs: [
 			{ name: "vaultId", type: "bytes32" },
+			{ name: "cidCommitment", type: "bytes32" },
 			{ name: "nullifier", type: "bytes32" },
 			{ name: "proof", type: "bytes" },
 		],
@@ -63,67 +53,39 @@ const ZKGATE_ABI = [
 	},
 	// Read functions
 	{
-		name: "checkAccess",
+		name: "checkCIDAccess",
 		type: "function",
 		stateMutability: "view",
 		inputs: [
 			{ name: "vaultId", type: "bytes32" },
+			{ name: "cidCommitment", type: "bytes32" },
 			{ name: "user", type: "address" },
 		],
 		outputs: [{ type: "bool" }],
 	},
 	{
-		name: "getEntryCount",
-		type: "function",
-		stateMutability: "view",
-		inputs: [{ name: "vaultId", type: "bytes32" }],
-		outputs: [{ type: "uint256" }],
-	},
-	{
-		name: "getEntry",
-		type: "function",
-		stateMutability: "view",
-		inputs: [
-			{ name: "vaultId", type: "bytes32" },
-			{ name: "entryIndex", type: "uint256" },
-		],
-		outputs: [
-			{ name: "cid", type: "string" },
-			{ name: "tag", type: "string" },
-			{ name: "provider", type: "uint8" },
-			{ name: "createdAt", type: "uint256" },
-		],
-	},
-	{
-		name: "getAllEntries",
+		name: "getVault",
 		type: "function",
 		stateMutability: "view",
 		inputs: [{ name: "vaultId", type: "bytes32" }],
 		outputs: [
-			{
-				type: "tuple[]",
-				components: [
-					{ name: "cid", type: "string" },
-					{ name: "tag", type: "string" },
-					{ name: "provider", type: "uint8" },
-					{ name: "createdAt", type: "uint256" },
-				],
-			},
+			{ name: "passwordHash", type: "bytes32" },
+			{ name: "poseidonRoot", type: "bytes32" },
+			{ name: "manifestCid", type: "string" },
+			{ name: "owner", type: "address" },
 		],
 	},
 	{
-		name: "vaultOwner",
+		name: "vaults",
 		type: "function",
 		stateMutability: "view",
 		inputs: [{ name: "vaultId", type: "bytes32" }],
-		outputs: [{ type: "address" }],
-	},
-	{
-		name: "vaultPasswordHash",
-		type: "function",
-		stateMutability: "view",
-		inputs: [{ name: "vaultId", type: "bytes32" }],
-		outputs: [{ type: "bytes32" }],
+		outputs: [
+			{ name: "passwordHash", type: "bytes32" },
+			{ name: "poseidonRoot", type: "bytes32" },
+			{ name: "manifestCid", type: "string" },
+			{ name: "owner", type: "address" },
+		],
 	},
 	{
 		name: "spentNullifiers",
@@ -133,11 +95,12 @@ const ZKGATE_ABI = [
 		outputs: [{ type: "bool" }],
 	},
 	{
-		name: "hasAccess",
+		name: "cidAccess",
 		type: "function",
 		stateMutability: "view",
 		inputs: [
 			{ name: "vaultId", type: "bytes32" },
+			{ name: "cidCommitment", type: "bytes32" },
 			{ name: "user", type: "address" },
 		],
 		outputs: [{ type: "bool" }],
@@ -149,13 +112,6 @@ const ZKGATE_ABI = [
 		inputs: [],
 		outputs: [{ type: "uint256" }],
 	},
-	{
-		name: "revokeOwnAccess",
-		type: "function",
-		stateMutability: "nonpayable",
-		inputs: [{ name: "vaultId", type: "bytes32" }],
-		outputs: [],
-	},
 	// Events
 	{
 		name: "VaultCreated",
@@ -166,29 +122,20 @@ const ZKGATE_ABI = [
 		],
 	},
 	{
-		name: "EntryAdded",
+		name: "VaultUpdated",
 		type: "event",
 		inputs: [
 			{ name: "vaultId", type: "bytes32", indexed: true },
-			{ name: "entryIndex", type: "uint256", indexed: true },
-			{ name: "cid", type: "string", indexed: false },
-			{ name: "tag", type: "string", indexed: false },
-			{ name: "provider", type: "uint8", indexed: false },
+			{ name: "newRoot", type: "bytes32", indexed: false },
+			{ name: "newManifestCid", type: "string", indexed: false },
 		],
 	},
 	{
-		name: "EntryRemoved",
+		name: "CIDAccessGranted",
 		type: "event",
 		inputs: [
 			{ name: "vaultId", type: "bytes32", indexed: true },
-			{ name: "entryIndex", type: "uint256", indexed: true },
-		],
-	},
-	{
-		name: "AccessGranted",
-		type: "event",
-		inputs: [
-			{ name: "vaultId", type: "bytes32", indexed: true },
+			{ name: "cidCommitment", type: "bytes32", indexed: true },
 			{ name: "user", type: "address", indexed: true },
 		],
 	},
@@ -228,30 +175,27 @@ export class ZKGate {
 		});
 	}
 
-	async getVaultOwner(vaultId: `0x${string}`): Promise<Address> {
-		return this.publicClient.readContract({
-			address: this.contractAddress,
-			abi: ZKGATE_ABI,
-			functionName: "vaultOwner",
-			args: [vaultId],
-		});
+	async getVault(vaultId: `0x${string}`): Promise<Vault> {
+		const [passwordHash, poseidonRoot, manifestCid, owner] =
+			await this.publicClient.readContract({
+				address: this.contractAddress,
+				abi: ZKGATE_ABI,
+				functionName: "getVault",
+				args: [vaultId],
+			});
+		return { passwordHash, poseidonRoot, manifestCid, owner };
 	}
 
-	async getVaultPasswordHash(vaultId: `0x${string}`): Promise<`0x${string}`> {
+	async checkCIDAccess(
+		vaultId: `0x${string}`,
+		cidCommitment: `0x${string}`,
+		user: Address,
+	): Promise<boolean> {
 		return this.publicClient.readContract({
 			address: this.contractAddress,
 			abi: ZKGATE_ABI,
-			functionName: "vaultPasswordHash",
-			args: [vaultId],
-		});
-	}
-
-	async checkAccess(vaultId: `0x${string}`, user: Address): Promise<boolean> {
-		return this.publicClient.readContract({
-			address: this.contractAddress,
-			abi: ZKGATE_ABI,
-			functionName: "checkAccess",
-			args: [vaultId, user],
+			functionName: "checkCIDAccess",
+			args: [vaultId, cidCommitment, user],
 		});
 	}
 
@@ -265,49 +209,8 @@ export class ZKGate {
 	}
 
 	async vaultExists(vaultId: `0x${string}`): Promise<boolean> {
-		const hash = await this.getVaultPasswordHash(vaultId);
-		return (
-			hash !==
-			"0x0000000000000000000000000000000000000000000000000000000000000000"
-		);
-	}
-
-	async getEntryCount(vaultId: `0x${string}`): Promise<bigint> {
-		return this.publicClient.readContract({
-			address: this.contractAddress,
-			abi: ZKGATE_ABI,
-			functionName: "getEntryCount",
-			args: [vaultId],
-		});
-	}
-
-	async getEntry(
-		vaultId: `0x${string}`,
-		entryIndex: bigint,
-	): Promise<VaultEntry> {
-		const [cid, tag, provider, createdAt] =
-			await this.publicClient.readContract({
-				address: this.contractAddress,
-				abi: ZKGATE_ABI,
-				functionName: "getEntry",
-				args: [vaultId, entryIndex],
-			});
-		return { cid, tag, provider: provider as StorageProvider, createdAt };
-	}
-
-	async getAllEntries(vaultId: `0x${string}`): Promise<VaultEntry[]> {
-		const entries = await this.publicClient.readContract({
-			address: this.contractAddress,
-			abi: ZKGATE_ABI,
-			functionName: "getAllEntries",
-			args: [vaultId],
-		});
-		return entries.map((e) => ({
-			cid: e.cid,
-			tag: e.tag,
-			provider: e.provider as StorageProvider,
-			createdAt: e.createdAt,
-		}));
+		const vault = await this.getVault(vaultId);
+		return vault.owner !== "0x0000000000000000000000000000000000000000";
 	}
 
 	// --- Write Functions ---
@@ -338,32 +241,18 @@ export class ZKGate {
 		return { hash, vaultId };
 	}
 
-	async addEntry(
+	async updateVault(
 		vaultId: `0x${string}`,
-		cid: string,
-		tag: string,
-		provider: StorageProvider,
+		newRoot: `0x${string}`,
+		newManifestCid: string,
 	): Promise<Hash> {
 		const { chain, account } = this.getWriteConfig();
 
 		return this.walletClient.writeContract({
 			address: this.contractAddress,
 			abi: ZKGATE_ABI,
-			functionName: "addEntry",
-			args: [vaultId, cid, tag, provider],
-			chain,
-			account,
-		});
-	}
-
-	async removeEntry(vaultId: `0x${string}`, entryIndex: bigint): Promise<Hash> {
-		const { chain, account } = this.getWriteConfig();
-
-		return this.walletClient.writeContract({
-			address: this.contractAddress,
-			abi: ZKGATE_ABI,
-			functionName: "removeEntry",
-			args: [vaultId, entryIndex],
+			functionName: "updateVault",
+			args: [vaultId, newRoot, newManifestCid],
 			chain,
 			account,
 		});
@@ -371,6 +260,7 @@ export class ZKGate {
 
 	async submitProof(
 		vaultId: `0x${string}`,
+		cidCommitment: `0x${string}`,
 		nullifier: `0x${string}`,
 		proof: `0x${string}`,
 	): Promise<Hash> {
@@ -380,20 +270,7 @@ export class ZKGate {
 			address: this.contractAddress,
 			abi: ZKGATE_ABI,
 			functionName: "submitProof",
-			args: [vaultId, nullifier, proof],
-			chain,
-			account,
-		});
-	}
-
-	async revokeOwnAccess(vaultId: `0x${string}`): Promise<Hash> {
-		const { chain, account } = this.getWriteConfig();
-
-		return this.walletClient.writeContract({
-			address: this.contractAddress,
-			abi: ZKGATE_ABI,
-			functionName: "revokeOwnAccess",
-			args: [vaultId],
+			args: [vaultId, cidCommitment, nullifier, proof],
 			chain,
 			account,
 		});

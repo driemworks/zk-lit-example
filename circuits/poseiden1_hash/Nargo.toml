@@ -1,5 +1,5 @@
 [package]
-name = "poseiden2_binding"
+name = "poseiden1_hash"
 type = "bin"
 authors = [""]
 

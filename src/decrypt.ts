@@ -16,6 +16,7 @@ export interface DecryptParams {
 	walletClient: WalletClient;
 	litClient: any;
 	ipfsCid: any;
+	cidCommitment: any;
 	zkGate: ZKGate;
 
 	// Vault info
@@ -44,6 +45,7 @@ export async function decrypt(params: DecryptParams): Promise<DecryptResult> {
 		walletClient,
 		litClient,
 		ipfsCid,
+		cidCommitment,
 		zkGate: zkgate,
 		vaultId,
 		nullifier,
@@ -53,6 +55,10 @@ export async function decrypt(params: DecryptParams): Promise<DecryptResult> {
 		accessControlConditions,
 		authContext,
 	} = params;
+
+	console.log(" Bytes:", privateInputs.password);
+	console.log("Expected Hash:", privateInputs.expected_hash);
+	console.log("CID Commitment (Field):", privateInputs.cid_commitment);
 
 	// 1. Generate ZK proof
 	console.log("Initializing Barretenberg...");
@@ -65,7 +71,7 @@ export async function decrypt(params: DecryptParams): Promise<DecryptResult> {
 
 	console.log("Generating proof...");
 	const proofResult = await backend.generateProof(witness, {
-		keccak: true,
+		verifierTarget: "evm",
 	});
 
 	const proofHex: Hex = toHex(proofResult.proof);
@@ -73,10 +79,16 @@ export async function decrypt(params: DecryptParams): Promise<DecryptResult> {
 
 	// 2. Submit proof to ZKGate
 	console.log("Submitting proof to ZKGate...");
-	const txHash = await zkgate.submitProof(vaultId, nullifier, proofHex);
+	// const txHash = await zkgate.submitProof(vaultId, nullifier, proofHex);
+	const submitHash = await zkgate.submitProof(
+		vaultId,
+		cidCommitment as Hex,
+		nullifier,
+		proofHex,
+	);
 
 	console.log("Waiting for transaction confirmation...");
-	const txReceipt = await zkgate.waitForTransaction(txHash);
+	const txReceipt = await zkgate.waitForTransaction(submitHash);
 
 	if (txReceipt.status !== "success") {
 		throw new Error(`Transaction failed: ${txReceipt.status}`);
@@ -89,39 +101,33 @@ export async function decrypt(params: DecryptParams): Promise<DecryptResult> {
 	if (!account) throw new Error("Wallet account required");
 
 	// sanity check
-	const hasAccess = await zkgate.checkAccess(vaultId, account.address);
+	const hasAccess = await zkgate.checkCIDAccess(
+		vaultId,
+		cidCommitment,
+		account.address,
+	);
 	if (!hasAccess) {
 		throw new Error("Access not granted after proof submission");
+	} else {
+		console.log("has access " + hasAccess);
 	}
 
 	// try to decrypt
 	console.log("Requesting decryption from LIT...");
-	// const decryptedResponse = await litClient.decrypt({
-	// 	ciphertext: ciphertext.ciphertext,
-	// 	dataToEncryptHash: ciphertext.dataToEncryptHash,
-	// 	unifiedAccessControlConditions: accessControlConditions,
-	// 	authContext,
-	// 	chain: "baseSepolia",
-	// });
-
-	// console.log("Decryption successful");
-
-	const result = await litClient.executeJs({
-		ipfsId: "CID_OF_YOUR_GUARD_CODE",
+	const decryptedResponse = await litClient.decrypt({
+		ciphertext: ciphertext.ciphertext,
+		dataToEncryptHash: ciphertext.dataToEncryptHash,
+		unifiedAccessControlConditions: accessControlConditions,
 		authContext,
-		jsParams: {
-			ciphertext: ciphertext.ciphertext,
-			dataToEncryptHash: ciphertext.dataToEncryptHash,
-			acc,
-			requestedCid,
-		},
+		chain: "baseSepolia",
 	});
-	console.log(result.response); // This is your plaintext
+
+	console.log("Decrypted result: " + JSON.stringify(decryptedResponse));
 
 	return {
-		txHash,
+		txHash: submitHash,
 		txReceipt,
-		decryptedData: "",
+		decryptedData: decryptedResponse.decryptedData,
 	};
 }
 
