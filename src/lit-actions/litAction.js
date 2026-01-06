@@ -16,6 +16,6 @@ const go = async (zkGateAddress, vaultId, cidCommitment) => {
 		cidCommitment,
 		callerAddress,
 	);
-	// let hasAccess = true;
+
 	return hasAccess.toString();
 };

@@ -1,218 +1,379 @@
-// // fangorn.ts
+import { createLitClient } from "@lit-protocol/lit-client";
+import { createAccBuilder } from "@lit-protocol/access-control-conditions";
+import { nagaDev } from "@lit-protocol/networks";
+import {
+	Account,
+	Address,
+	createPublicClient,
+	createWalletClient,
+	Hex,
+	http,
+	toHex,
+} from "viem";
+import { baseSepolia } from "viem/chains";
+import { ZKGate } from "./interface/zkGate.js";
+import { hashPassword } from "./interface/utils.js";
+import { buildCircuitInputs, computeTagCommitment } from "./interface/proof.js";
+import {
+	buildTreeFromLeaves,
+	fieldToHex,
+	hexToField,
+} from "./interface/merkle.js";
+import { VaultEntry, VaultManifest } from "./interface/types.js";
+import { PinataSDK } from "pinata";
+import { Barretenberg, UltraHonkBackend } from "@aztec/bb.js";
+import { CompiledCircuit, Noir } from "@noir-lang/noir_js";
+import { createAuthManager, storagePlugins } from "@lit-protocol/auth";
 
-// import { Noir } from '@noir-lang/noir_js';
-// import { BarretenbergBackend } from '@noir-lang/backend_barretenberg';
-// import { LitNodeClient } from '@lit-protocol/lit-node-client';
-// import { ethers } from 'ethers';
+// intermediate entry struct
+interface PendingEntry {
+	tag: string;
+	cid: string;
+	leaf: bigint;
+	commitment: Hex;
+	acc: any;
+}
 
-// // Precompiled circuits
-// import passwordCircuit from './circuits/password.json';
-// import allowlistCircuit from './circuits/allowlist.json';
-// import aggregatorCircuit from './circuits/aggregator.json';
+/**
+ *
+ */
+export class Fangorn {
+	private litClient: any;
+	private zkGate: any;
 
-// export class Fangorn {
-//   private lit: LitNodeClient;
-//   private provider: ethers.Provider;
-//   private verifier: ethers.Contract;
-//   private registry: ethers.Contract;
+	private walletClient: any;
 
-//   constructor(config: FangornConfig) {
-//     this.provider = new ethers.JsonRpcProvider(config.rpcUrl);
-//     this.verifier = new ethers.Contract(config.verifierAddress, VERIFIER_ABI, this.provider);
-//     this.registry = new ethers.Contract(config.registryAddress, REGISTRY_ABI, this.provider);
-//   }
+	private pinata: PinataSDK;
 
-//   async connect() {
-//     this.lit = new LitNodeClient({ litNetwork: 'datil' });
-//     await this.lit.connect();
-//   }
+	// in-mem state for building manifests
+	private pendingEntries: Map<string, PendingEntry> = new Map();
 
-//   // ============ PREDICATES ============
+	constructor(
+		litClient: any,
+		zkGate: any,
+		walletClient: any,
+		pinata: PinataSDK,
+	) {
+		this.litClient = litClient;
+		this.zkGate = zkGate;
 
-//   static Password(preimageHash: string): PasswordPredicate {
-//     return { type: 'password', hash: preimageHash };
-//   }
+		this.walletClient = walletClient;
 
-//   static Allowlist(addresses: string[], message: string): AllowlistPredicate {
-//     const root = computeMerkleRoot(addresses);
-//     const messageHash = ethers.keccak256(ethers.toUtf8Bytes(message));
-//     return { type: 'allowlist', root, messageHash, addresses, message };
-//   }
+		this.pinata = pinata;
+	}
 
-//   static And(...predicates: Predicate[]): AndPredicate {
-//     return { type: 'and', predicates };
-//   }
+	public static async init(
+		account: Account,
+		rpcUrl: string,
+		zkGateContractAddress: Address,
+		jwt: string,
+		gateway: string,
+	) {
+		// client to interact with LIT proto
+		const litClient = await createLitClient({
+			// @ts-expect-error - TODO: fix this
+			network: nagaDev,
+		});
 
-//   // ============ ENCRYPT ============
+		const publicClient = createPublicClient({ transport: http(rpcUrl) });
+		const walletClient = createWalletClient({
+			account,
+			transport: http(rpcUrl),
+			chain: baseSepolia,
+		});
 
-//   async encrypt(
-//     data: string,
-//     condition: Predicate
-//   ): Promise<{ contentId: string; ciphertextCID: string }> {
+		// interacts with the zk-gate contract
+		let zkGateClient = new ZKGate(
+			zkGateContractAddress,
+			publicClient,
+			walletClient,
+		);
 
-//     // 1. Compute condition hash
-//     const conditionHash = this.hashCondition(condition);
+		// storage via Pinata
+		const pinata = new PinataSDK({
+			pinataJwt: jwt,
+			pinataGateway: gateway,
+		});
 
-//     // 2. Encrypt with LIT
-//     const { ciphertext, dataToEncryptHash } = await this.lit.encrypt({
-//       dataToEncrypt: new TextEncoder().encode(data),
-//       // ACC that checks our verifier contract
-//       accessControlConditions: [{
-//         contractAddress: this.verifier.address,
-//         standardContractType: 'custom',
-//         chain: 'base',
-//         method: 'verifyAggregated',
-//         parameters: [':userProof', conditionHash],
-//         returnValueTest: { comparator: '=', value: 'true' }
-//       }]
-//     });
+		return new Fangorn(litClient, zkGateClient, walletClient, pinata);
+	}
 
-//     // 3. Upload to IPFS
-//     const ciphertextCID = await this.uploadToIPFS({
-//       ciphertext,
-//       dataToEncryptHash,
-//       condition
-//     });
+	// TODO: how to ensure password is zeroized?
+	async createVault(password: string): Promise<Hex> {
+		let passwordHash = hashPassword(password);
+		const fee = await this.zkGate.getVaultCreationFee();
+		const { hash: createHash, vaultId } = await this.zkGate.createVault(
+			passwordHash,
+			fee,
+		);
+		await this.zkGate.waitForTransaction(createHash);
+		return vaultId;
+	}
 
-//     // 4. Register on-chain
-//     const contentId = ethers.keccak256(ethers.toUtf8Bytes(ciphertextCID));
-//     const tx = await this.registry.register(contentId, conditionHash, ciphertextCID);
-//     await tx.wait();
+	/**
+	 * Encrypts data (with LIT) and uploads ciphertext to IPFS.
+	 * Does NOT update the vault!! You must call commitVault() after adding all files.
+	 */
+	async addFile(
+		vaultId: Hex,
+		tag: string,
+		plaintext: string,
+		litActionCid: string,
+	): Promise<{ cid: string; commitment: Hex }> {
+		// compute commitment to (vaultId, tag)
+		const leaf = await computeTagCommitment(vaultId, tag);
+		const commitmentHex = fieldToHex(leaf);
 
-//     return { contentId, ciphertextCID };
-//   }
+		// build ACC
+		const acc = createAccBuilder()
+			.requireLitAction(
+				litActionCid,
+				"go",
+				[this.zkGate.getContractAddress(), vaultId, commitmentHex],
+				"true",
+			)
+			.build();
 
-//   // ============ DECRYPT ============
+		// encrypt
+		const encryptedData = await this.litClient.encrypt({
+			dataToEncrypt: plaintext,
+			unifiedAccessControlConditions: acc,
+			chain: "baseSepolia", // TODO: this should probably be dynamic
+		});
 
-//   async decrypt(
-//     contentId: string,
-//     witnesses: {
-//       password?: string;
-//       allowlist?: { signer: ethers.Signer };
-//     }
-//   ): Promise<string> {
+		// upload ciphertext (pin)
+		const upload = await this.pinata.upload.public.json(
+			{ encryptedData, acc },
+			{ metadata: { name: tag } },
+		);
 
-//     // 1. Fetch condition from registry
-//     const content = await this.registry.contents(contentId);
-//     const { ciphertext, dataToEncryptHash, condition } = await this.fetchFromIPFS(content.ciphertextCID);
+		// stage the entry (not committed yet)
+		this.pendingEntries.set(tag, {
+			tag,
+			cid: upload.cid,
+			leaf,
+			commitment: commitmentHex,
+			acc,
+		});
 
-//     // 2. Generate individual proofs
-//     const proofs: GeneratedProof[] = [];
+		return { cid: upload.cid, commitment: commitmentHex };
+	}
 
-//     for (const pred of this.flattenCondition(condition)) {
-//       if (pred.type === 'password' && witnesses.password) {
-//         const proof = await this.provePassword(pred.hash, witnesses.password);
-//         proofs.push(proof);
-//       }
+	/**
+	 * Removes a file from staging (call before committing)
+	 * @param tag The tag of the file
+	 * @returns bool
+	 */
+	removeFile(tag: string): boolean {
+		return this.pendingEntries.delete(tag);
+	}
 
-//       if (pred.type === 'allowlist' && witnesses.allowlist) {
-//         const proof = await this.proveAllowlist(
-//           pred,
-//           witnesses.allowlist.signer
-//         );
-//         proofs.push(proof);
-//       }
-//     }
+	/**
+	 * Builds manifest from all staged files and updates the vault on-chain.
+	 * Call this *after* adding all files with addFile().
+	 */
+	async commitVault(vaultId: Hex): Promise<{ manifestCid: string; root: Hex }> {
+		if (this.pendingEntries.size === 0) {
+			throw new Error("No files to commit");
+		}
 
-//     // 3. Aggregate proofs
-//     const aggregatedProof = await this.aggregateProofs(proofs, content.conditionHash);
+		// build Merkle tree
+		const entries = Array.from(this.pendingEntries.values());
+		const leaves = entries.map((e) => e.leaf);
+		const { root, layers } = await buildTreeFromLeaves(leaves);
+		const rootHex = fieldToHex(root);
 
-//     // 4. Decrypt via LIT
-//     const decrypted = await this.lit.executeJs({
-//       code: FANGORN_LIT_ACTION,
-//       jsParams: {
-//         contentId,
-//         aggregatedProof,
-//         conditionHash: content.conditionHash,
-//         ciphertext,
-//         dataToEncryptHash
-//       }
-//     });
+		// construct new manifest
+		const manifest: VaultManifest = {
+			version: 1,
+			poseidon_root: rootHex,
+			entries: entries.map((e, i) => ({
+				tag: e.tag,
+				cid: e.cid,
+				index: i,
+				leaf: fieldToHex(e.leaf),
+				commitment: e.commitment,
+			})),
+			tree: layers.map((layer) => layer.map(fieldToHex)),
+		};
 
-//     return new TextDecoder().decode(decrypted);
-//   }
+		// pin the manifest
+		const manifestUpload = await this.pinata.upload.public.json(manifest, {
+			metadata: { name: `manifest-${vaultId}` },
+		});
 
-//   // ============ PROVING ============
+		// update contract
+		const hash = await this.zkGate.updateVault(
+			vaultId,
+			rootHex,
+			manifestUpload.cid,
+		);
+		await this.zkGate.waitForTransaction(hash);
 
-//   private async provePassword(hash: string, preimage: string): Promise<GeneratedProof> {
-//     const backend = new BarretenbergBackend(passwordCircuit);
-//     const noir = new Noir(passwordCircuit, backend);
+		// clear pending entries
+		this.pendingEntries.clear();
 
-//     const { witness } = await noir.execute({
-//       hash: hexToBytes(hash),
-//       preimage: stringToBytes(preimage),
-//       preimage_len: preimage.length
-//     });
+		return { manifestCid: manifestUpload.cid, root: rootHex };
+	}
 
-//     const proof = await backend.generateProof(witness);
+	/**
+	 * Loads existing manifest, adds new files, and recommits.
+	 */
+	async addFileToExistingVault(
+		vaultId: Hex,
+		tag: string,
+		plaintext: string,
+		litActionCid: string,
+	): Promise<{ manifestCid: string; root: Hex }> {
+		// load existing manifest
+		const vault = await this.zkGate.getVault(vaultId);
+		if (!vault.manifestCid) {
+			throw new Error(
+				"Vault has no manifest - use addFile + commitVault instead",
+			);
+		}
 
-//     return {
-//       type: 'password',
-//       proof: proof.proof,
-//       publicInputs: [hash]
-//     };
-//   }
+		const oldManifest = await this.fetchManifest(vault.manifestCid);
 
-//   private async proveAllowlist(
-//     pred: AllowlistPredicate,
-//     signer: ethers.Signer
-//   ): Promise<GeneratedProof> {
+		// load existing entries into pending
+		for (const entry of oldManifest.entries) {
+			this.pendingEntries.set(entry.tag, {
+				tag: entry.tag,
+				cid: entry.cid,
+				leaf: hexToField(entry.leaf),
+				commitment: entry.commitment as Hex,
+				acc: null, // Don't have ACC for existing entries
+			});
+		}
 
-//     // Sign the message
-//     const signature = await signer.signMessage(pred.message);
-//     const signerAddress = await signer.getAddress();
+		// add new file
+		await this.addFile(vaultId, tag, plaintext, litActionCid);
 
-//     // Get Merkle proof for address
-//     const { proof: merkleProof, index } = getMerkleProof(pred.addresses, signerAddress);
+		// ommit (rebuilds the tree with all entries)
+		const result = await this.commitVault(vaultId);
 
-//     // Get public key from signature
-//     const pubKey = ethers.SigningKey.recoverPublicKey(
-//       ethers.hashMessage(pred.message),
-//       signature
-//     );
+		// try to unpin old manifest
+		try {
+			await this.pinata.files.public.delete([vault.manifestCid]);
+		} catch (e) {
+			console.warn("Failed to unpin old manifest:", e);
+		}
 
-//     const backend = new BarretenbergBackend(allowlistCircuit);
-//     const noir = new Noir(allowlistCircuit, backend);
+		return result;
+	}
 
-//     const { witness } = await noir.execute({
-//       message_hash: hexToBytes(pred.messageHash),
-//       allowlist_root: pred.root,
-//       signature: hexToBytes(signature.slice(0, -2)), // Remove v
-//       pub_key: hexToBytes(pubKey.slice(4)), // Remove 0x04 prefix
-//       merkle_proof: merkleProof,
-//       merkle_index: index
-//     });
+	async decryptFile(
+		vaultId: Hex,
+		tag: string,
+		password: string,
+		circuit: any,
+	): Promise<string> {
+		// load the auth context
+		const authManager = createAuthManager({
+			storage: storagePlugins.localStorageNode({
+				appName: "fangorn",
+				networkName: nagaDev.getNetworkName(),
+				storagePath: "./lit-auth-storage",
+			}),
+		});
 
-//     const proof = await backend.generateProof(witness);
+		const litClient = this.litClient;
+		const authContext = await authManager.createEoaAuthContext({
+			litClient,
+			config: {
+				account: this.walletClient.account,
+			},
+			authConfig: {
+				domain: "localhost", // TODO: do we need to update this?
+				statement: "Decrypt test data", // Do we need this?
+				// is this the right duration for expiry?
+				expiration: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(),
+				// Are resources too open?
+				resources: [
+					["access-control-condition-decryption", "*"],
+					["lit-action-execution", "*"],
+				],
+			},
+		});
 
-//     return {
-//       type: 'allowlist',
-//       proof: proof.proof,
-//       publicInputs: [pred.messageHash, pred.root]
-//     };
-//   }
+		// fetch manifest from pinata
+		const vault = await this.zkGate.getVault(vaultId);
+		const manifest = await this.fetchManifest(vault.manifestCid);
 
-//   private async aggregateProofs(
-//     proofs: GeneratedProof[],
-//     conditionHash: string
-//   ): Promise<Uint8Array> {
+		// try to find entry
+		const entry = manifest.entries.find((e) => e.tag === tag);
+		if (!entry) {
+			throw new Error(`Entry not found: ${tag}`);
+		}
 
-//     const backend = new BarretenbergBackend(aggregatorCircuit);
-//     const noir = new Noir(aggregatorCircuit, backend);
+		// check if already have access (do not need to reverify)
+		const userAddress = this.walletClient.account.address;
+		const hasAccess = await this.zkGate.checkCIDAccess(
+			vaultId,
+			entry.commitment as Hex,
+			userAddress,
+		);
 
-//     // Prepare inputs for aggregator
-//     const inputs = {
-//       condition_hash: conditionHash,
-//       password_proof: proofs.find(p => p.type === 'password')?.proof,
-//       password_public_inputs: proofs.find(p => p.type === 'password')?.publicInputs,
-//       allowlist_proof: proofs.find(p => p.type === 'allowlist')?.proof,
-//       allowlist_public_inputs: proofs.find(p => p.type === 'allowlist')?.publicInputs,
-//       // VKs are hardcoded in circuit or passed as constants
-//     };
+		if (!hasAccess) {
+			await this.proveAccess(vaultId, password, entry, manifest, circuit);
+		}
 
-//     const { witness } = await noir.execute(inputs);
-//     const { proof } = await backend.generateProof(witness);
+		// fetch ciphertext
+		const response = await this.pinata.gateways.public.get(entry.cid);
+		const { encryptedData, acc } = response.data as any;
 
-//     return proof;
-//   }
-// }
+		// request decrypt ion
+		const decrypted = await this.litClient.decrypt({
+			ciphertext: encryptedData.ciphertext,
+			dataToEncryptHash: encryptedData.dataToEncryptHash,
+			unifiedAccessControlConditions: acc,
+			authContext,
+			chain: "baseSepolia",
+		});
+
+		return new TextDecoder().decode(decrypted.decryptedData);
+	}
+
+	// proof gen
+	private async proveAccess(
+		vaultId: Hex,
+		password: string,
+		entry: VaultEntry,
+		manifest: VaultManifest,
+		circuit: CompiledCircuit,
+	): Promise<void> {
+		const userAddress = this.walletClient.account.address;
+
+		// build circuit inputs
+		const { inputs, nullifier, cidCommitment } = await buildCircuitInputs(
+			password,
+			entry,
+			userAddress,
+			vaultId,
+			manifest,
+		);
+
+		const api = await Barretenberg.new({ threads: 1 });
+		const backend = new UltraHonkBackend(circuit.bytecode, api);
+		const noir = new Noir(circuit);
+		const { witness } = await noir.execute(inputs);
+		const proofResult = await backend.generateProof(witness, {
+			verifierTarget: "evm",
+		});
+
+		const proofHex: Hex = toHex(proofResult.proof);
+		// submit onchain
+		const hash = await this.zkGate.submitProof(
+			vaultId,
+			cidCommitment,
+			nullifier,
+			proofHex,
+		);
+		await this.zkGate.waitForTransaction(hash);
+	}
+
+	private async fetchManifest(cid: string): Promise<VaultManifest> {
+		const response = await this.pinata.gateways.public.get(cid);
+		return response.data as unknown as VaultManifest;
+	}
+}

@@ -24,6 +24,8 @@ import {
 	hexToField,
 } from "./interface/merkle.js";
 import { VaultEntry, VaultManifest } from "./interface/types.js";
+import { Fangorn } from "./fangorn.js";
+import { assert } from "console";
 
 const require = createRequire(import.meta.url);
 const circuit = require("../circuits/preimage/target/preimage.json");
@@ -34,215 +36,66 @@ export const runZkExample = async ({
 	verifierContractAddress,
 	zkGateAddress,
 	ipfsCid,
+	rpcUrl,
+	jwt,
+	gateway,
 }: {
 	delegatorAccount: Account;
 	delegateeAccount: Account;
 	verifierContractAddress: string;
 	zkGateAddress: string;
 	ipfsCid: string;
+	rpcUrl: string;
+	jwt: string;
+	gateway: string;
 }) => {
-	const rpcUrl = process.env.CHAIN_RPC_URL;
-	if (!rpcUrl) throw new Error("CHAIN_RPC_URL required");
-
-	console.log("\n========== STARTING ZK TEST ==========\n");
-
-	const litClient = await createLitClient({
-		// @ts-expect-error - TODO: fix this
-		network: nagaDev,
-	});
-
-	// ============== DELEGATOR SETUP ==============
-
-	const delegatorPublicClient = createPublicClient({ transport: http(rpcUrl) });
-	const delegatorWalletClient = createWalletClient({
-		account: delegatorAccount,
-		transport: http(rpcUrl),
-		chain: baseSepolia,
-	});
-
-	let zkGateClient = new ZKGate(
+	// create fangorn client for the delegator
+	const fangorn = await Fangorn.init(
+		delegatorAccount,
+		rpcUrl,
 		zkGateAddress as Address,
-		delegatorPublicClient,
-		delegatorWalletClient,
+		jwt,
+		gateway,
 	);
 
-	// ============== CONFIG ==============
+	// create a new vault
+	const password = "test3";
+	const vaultId = await fangorn.createVault(password);
 
-	const password = "test2";
-	const tag = "test-document";
-	const plaintext = "This is my secret message";
-	const hashPass = hashPassword(password);
+	// add multiple files
+	const taxTag = "tax-2025";
+	const secretTaxData = "Secret Tax Data";
+	await fangorn.addFile(vaultId, taxTag, secretTaxData, ipfsCid);
+	await fangorn.addFile(vaultId, "passport", "passport scan", ipfsCid);
+	await fangorn.addFile(vaultId, "medical", "medical records", ipfsCid);
 
-	// ============== 1. CREATE VAULT ==============
+	// commit all at once (one Merkle tree, one manifest, one tx)
+	await fangorn.commitVault(vaultId);
 
-	console.log("1. Creating vault...");
-	const fee = await zkGateClient.getVaultCreationFee();
-	const { hash: createHash, vaultId } = await zkGateClient.createVault(
-		hashPass,
-		fee,
-	);
-	await zkGateClient.waitForTransaction(createHash);
-	console.log("✓ Vault created:", vaultId);
-
-	// ============== 2. COMPUTE TAG COMMITMENT ==============
-
-	console.log("\n2. Computing tag commitment...");
-	const { leaf } = await computeTagCommitment(vaultId, tag);
-	const cidCommitment = await poseidon1Hash(leaf);
-	const cidCommitmentHex = fieldToHex(cidCommitment);
-	console.log("✓ Leaf:", leaf.toString());
-	console.log("✓ CID Commitment:", cidCommitmentHex);
-
-	// ============== 3. ENCRYPT DATA ==============
-
-	console.log("\n3. Encrypting data...");
-	console.log("\n3. Encrypting data...");
-	const { encryptedData, acc } = await encryptWithZkCondition(
-		litClient,
-		plaintext,
-		zkGateAddress,
+	// Later, add another file (commitVault is called internally)
+	await fangorn.addFileToExistingVault(
 		vaultId,
-		cidCommitmentHex,
+		"new-doc",
+		"new content",
 		ipfsCid,
 	);
 
-	// Upload encrypted data
-	const cid = await uploadToPinata(tag, { encryptedData, acc });
-	console.log("✓ Uploaded ciphertext CID:", cid);
-
-	// ============== 4. BUILD MERKLE TREE ==============
-
-	console.log("\n4. Building Merkle tree...");
-
-	// Build tree from leaves (as bigints)
-	const leaves = [leaf];
-	const { root, layers } = await buildTreeFromLeaves(leaves);
-	console.log("✓ Merkle root:", fieldToHex(root));
-
-	// ============== 5. CREATE & UPLOAD MANIFEST ==============
-
-	console.log("\n5. Creating manifest...");
-
-	// Create manifest with string values
-	const manifest: VaultManifest = {
-		version: 1,
-		poseidon_root: fieldToHex(root),
-		entries: [
-			{
-				tag,
-				cid,
-				index: 0,
-				commitment: cidCommitmentHex,
-				leaf: fieldToHex(leaf),
-			},
-		],
-		tree: layers.map((layer) => layer.map(fieldToHex)),
-	};
-
-	// Rate limit protection
-	await new Promise((f) => setTimeout(f, 2000));
-
-	const manifestCid = await uploadToPinata("manifest", manifest);
-	console.log("✓ Manifest CID:", manifestCid);
-
-	// ============== 6. UPDATE VAULT ON-CHAIN ==============
-
-	console.log("\n6. Updating vault on-chain...");
-	const updateHash = await zkGateClient.updateVault(
-		vaultId,
-		fieldToHex(root),
-		manifestCid,
-	);
-	await zkGateClient.waitForTransaction(updateHash);
-	console.log("✓ Vault updated");
-
-	console.log("\n========== ENCRYPTION COMPLETE ==========\n");
-
-	// Rate limit protection
-	await new Promise((f) => setTimeout(f, 3000));
-
-	console.log("\n========== STARTING DECRYPTION ==========\n");
-
-	// ============== 7. DELEGATEE SETUP ==============
-
-	const authManager = createAuthManager({
-		storage: storagePlugins.localStorageNode({
-			appName: "fangorn",
-			networkName: nagaDev.getNetworkName(),
-			storagePath: "./lit-auth-storage",
-		}),
-	});
-
-	const authContext = await authManager.createEoaAuthContext({
-		litClient,
-		config: {
-			account: delegateeAccount,
-		},
-		authConfig: {
-			domain: "localhost",
-			statement: "Decrypt test data",
-			expiration: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(),
-			resources: [
-				["access-control-condition-decryption", "*"],
-				["lit-action-execution", "*"],
-			],
-		},
-	});
-
-	const delegateePublicClient = createPublicClient({ transport: http(rpcUrl) });
-	const delegateeWalletClient = createWalletClient({
-		account: delegateeAccount,
-		transport: http(rpcUrl),
-		chain: baseSepolia,
-	});
-
-	zkGateClient = new ZKGate(
+	// decryption
+	// build new fangorn client for the delegatee
+	const fangornDelegatee = await Fangorn.init(
+		delegateeAccount,
+		rpcUrl,
 		zkGateAddress as Address,
-		delegateePublicClient,
-		delegateeWalletClient,
+		jwt,
+		gateway,
 	);
-
-	const userAddress = delegateeWalletClient.account.address;
-
-	// ============== 8. BUILD CIRCUIT INPUTS ==============
-
-	console.log("7. Building circuit inputs...");
-
-	// Use the manifest entry (strings)
-	const entry: VaultEntry = manifest.entries[0];
-
-	const {
-		inputs,
-		nullifier,
-		cidCommitment: computedCommitment,
-	} = await buildCircuitInputs(password, entry, userAddress, vaultId, manifest);
-
-	console.log("✓ Circuit inputs built");
-	console.log("✓ Nullifier:", nullifier);
-	console.log("✓ CID Commitment:", computedCommitment);
-
-	// ============== 9. DECRYPT ==============
-
-	console.log("\n8. Generating proof and decrypting...");
-
-	const result = await decrypt({
-		publicClient: delegateePublicClient,
-		walletClient: delegateeWalletClient,
-		litClient,
-		ipfsCid: "",
-		cidCommitment: computedCommitment,
-		zkGate: zkGateClient,
+	const plaintext = await fangornDelegatee.decryptFile(
 		vaultId,
-		nullifier,
+		taxTag,
+		password,
 		circuit,
-		privateInputs: inputs,
-		ciphertext: encryptedData,
-		accessControlConditions: acc,
-		authContext,
-	});
+	);
+	console.log("we got the plaintext " + plaintext);
 
-	console.log("\n========== TEST PASSED ==========");
-	console.log("✓ Decrypted:", result.decryptedData);
-
-	return result;
+	assert(plaintext === secretTaxData);
 };

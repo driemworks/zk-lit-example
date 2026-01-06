@@ -165,6 +165,10 @@ export class ZKGate {
 		};
 	}
 
+	getContractAddress() {
+		return this.contractAddress;
+	}
+
 	// --- Read Functions ---
 
 	async getVaultCreationFee(): Promise<bigint> {

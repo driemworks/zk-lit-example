@@ -58,6 +58,9 @@ importers:
       buffer:
         specifier: ^6.0.3
         version: 6.0.3
+      pinata:
+        specifier: ^2.5.2
+        version: 2.5.2
       poseidon-lite:
         specifier: ^0.3.0
         version: 0.3.0
@@ -3729,6 +3732,18 @@ packages:
     resolution: {integrity: sha512-eG2dWTVw5bzqGRztnHExczNxt5VGsE6OwTeCG3fdUf9KBsZzO3R5OIIIzWR+iZA0NtZ+RDVdaoE2dK1cn6jH4g==}
     engines: {node: '>=0.10'}
     hasBin: true
+
+  pinata@2.5.2:
+    resolution: {integrity: sha512-0F+ag5yji0ySIa2k766xtMnem5frYdpW9OKXjEkm/LUkfIp/xe2MX3tZxBNCz/SAxldabR7p0efMhgpjeoJtJA==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      react: '>=16.8.0'
+      react-dom: '>=16.8.0'
+    peerDependenciesMeta:
+      react:
+        optional: true
+      react-dom:
+        optional: true
 
   pino-abstract-transport@2.0.0:
     resolution: {integrity: sha512-F63x5tizV6WCh4R6RHyi2Ml+M70DNRXt/+HANowMflpgGFMAym/VKm6G7ZOQRjqN7XbGxK1Lg9t6ZrtzOaivMw==}
@@ -9280,6 +9295,8 @@ snapshots:
   picomatch@4.0.3: {}
 
   pidtree@0.6.0: {}
+
+  pinata@2.5.2: {}
 
   pino-abstract-transport@2.0.0:
     dependencies:

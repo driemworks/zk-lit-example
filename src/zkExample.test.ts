@@ -55,10 +55,13 @@ const getEnv = (key: string) => {
 	return value;
 };
 
-const doDeploy = true;
+// const doDeploy = false;
 
 describe("ZK-gated decryption", () => {
 	let rpcUrl: string;
+	let jwt: string;
+	let gateway: string;
+
 	let delegatorAccount: Account;
 	let delegateeAccount: Account;
 	let verifierContractAddress: Address;
@@ -66,9 +69,14 @@ describe("ZK-gated decryption", () => {
 	let ipfsCid: string;
 
 	beforeAll(async () => {
-		rpcUrl = getEnv("CHAIN_RPC_URL");
+		rpcUrl = process.env.CHAIN_RPC_URL!;
+		if (!rpcUrl) throw new Error("CHAIN_RPC_URL required");
 
-		console.log("pk " + getEnv("DELEGATOR_ETH_PRIVATE_KEY"));
+		jwt = process.env.PINATA_JWT!;
+		if (!jwt) throw new Error("PINATA_JWT required");
+
+		gateway = process.env.PINATA_GATEWAY!;
+		if (!gateway) throw new Error("PINATA_GATEWAY required");
 
 		delegatorAccount = privateKeyToAccount(
 			getEnv("DELEGATOR_ETH_PRIVATE_KEY") as Hex,
@@ -78,32 +86,32 @@ describe("ZK-gated decryption", () => {
 			getEnv("DELEGATEE_ETH_PRIVATE_KEY") as Hex,
 		);
 
-		if (doDeploy) {
-			// upload lit action
-			// Upload the Lit Action to IPFS
-			console.log("\n=== Uploading Verifier Lit Action to IPFS ===");
-			const litActionCode = readFileSync(
-				join(__dirname, "./lit-actions/litAction.js"),
-				"utf-8",
-			);
-			ipfsCid = await uploadToPinata("lit-action.js", litActionCode);
+		// if (doDeploy) {
+		// 	// upload lit action
+		// 	// Upload the Lit Action to IPFS
+		// 	console.log("\n=== Uploading Verifier Lit Action to IPFS ===");
+		// 	const litActionCode = readFileSync(
+		// 		join(__dirname, "./lit-actions/litAction.js"),
+		// 		"utf-8",
+		// 	);
+		// 	ipfsCid = await uploadToPinata("lit-action.js", litActionCode);
 
-			// Deploy the Verifier contract
-			console.log("\n=== Deploying Verifier Contract ===");
-			// deploy contracts
-			const deployment = await deployContracts({ account: delegatorAccount });
-			verifierContractAddress = deployment.verifierAddress;
-			zkGateAddress = deployment.zkGateAddress;
-		} else {
-			ipfsCid = "QmdUfVyBCChoWinGh1XbVkYrL3p5GMMMoqDmf1iCBPv42u";
-			verifierContractAddress = "0x49f7483e731514a746f0e4ef22df5a52c312d532";
-			zkGateAddress = "0x738e4bf543a8cc3789853e5c0b44334a13085bdd";
-		}
+		// 	// Deploy the Verifier contract
+		// 	console.log("\n=== Deploying Verifier Contract ===");
+		// 	// deploy contracts
+		// 	const deployment = await deployContracts({ account: delegatorAccount });
+		// 	verifierContractAddress = deployment.verifierAddress;
+		// 	zkGateAddress = deployment.zkGateAddress;
+		// } else {
+		ipfsCid = process.env.LIT_ACTION_CID!;
+		verifierContractAddress = process.env.VERIFIER_CONTRACT_ADDR! as Address;
+		zkGateAddress = process.env.ZK_GATE_ADDR! as Address;
+		// }
 
-		console.log(`✅ Lit Action uploaded to IPFS with CID: ${ipfsCid}`);
 		// verifierAbi = deployment.verifierAbi;
 		// zkGateAbi = deployment.zkGateAbi;
 
+		console.log(`Lit Action CID: ${ipfsCid}`);
 		console.log(`Verifier: ${verifierContractAddress}`);
 		console.log(`ZKGate: ${zkGateAddress}`);
 	}, 120000); // 2 minute timeout for deployment
@@ -135,20 +143,19 @@ describe("ZK-gated decryption", () => {
 
 	//     expect(didFail).toBe(true);
 	// }, 120000);
-	it("should succeed to decrypt when the proof is valid", async () => {
-		// let input = [12345, 2];
-		// let hash = await poseidon2Hash(12345, 1);
-		// console.log(hash);
 
+	it("should succeed to decrypt when the proof is valid", async () => {
 		console.log("\n=== Testing via Lit Action ===");
+
 		await runZkExample({
 			delegatorAccount,
 			delegateeAccount,
 			verifierContractAddress,
 			zkGateAddress,
-			// proofHex: proofHex,
 			ipfsCid,
-			// decryptIpfsCid,
+			rpcUrl,
+			jwt,
+			gateway,
 		});
 
 		console.log("Decryption succeeded!");
